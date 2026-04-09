@@ -18,7 +18,7 @@ SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Foodstuff Store")
-SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "noreply@foodstuffstore.com")
+SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "support@foodstuff.store")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 
