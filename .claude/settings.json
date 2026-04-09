@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "*",
-      "Read(//Users/mac/Desktop/desktop2/untitled_folder_2/foodstuffstore/newinventoryfrontend/**)"
+      "Read(//Users/mac/Desktop/desktop2/untitled_folder_2/foodstuffstore/newinventoryfrontend/**)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
