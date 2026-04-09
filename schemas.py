@@ -178,6 +178,7 @@ class ProductOut(BaseModel):
     unit_of_measure: Optional[str] = None
     category_id: Optional[int] = None
     category: Optional[CategoryOut] = None
+    image_url: Optional[str] = None
     is_active: bool
     created_at: datetime
     current_cost_price: Optional[float] = None

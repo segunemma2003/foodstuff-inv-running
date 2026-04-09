@@ -148,6 +148,7 @@ class Product(Base):
     sku = Column(String(100), unique=True)
     unit_of_measure = Column(String(50))
     category_id = Column(Integer, ForeignKey("product_categories.id"))
+    image_url = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

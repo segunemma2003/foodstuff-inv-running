@@ -19,6 +19,7 @@ router = APIRouter(prefix="/products", tags=["Products"])
 
 
 def _enrich(product: models.Product, db: Session) -> schemas.ProductOut:
+    from utils.s3 import presigned_url as s3_presigned
     out = schemas.ProductOut.model_validate(product)
     cp = (
         db.query(models.CostPrice)
@@ -32,6 +33,17 @@ def _enrich(product: models.Product, db: Session) -> schemas.ProductOut:
     if cp:
         out.current_cost_price = float(cp.cost_price)
         out.cost_price_effective_date = cp.effective_date
+    # Convert S3 key to a 1-hour presigned URL for display
+    if product.image_url and not product.image_url.startswith("http"):
+        try:
+            out.image_url = s3_presigned(
+                key=product.image_url,
+                filename=product.image_url.rsplit("/", 1)[-1],
+                content_type="image/jpeg",
+                expiry=3600,
+            )
+        except Exception:
+            out.image_url = None
     return out
 
 
@@ -224,6 +236,60 @@ def product_analytics(
         ],
         monthly_trend=[],  # populated via analytics endpoint for date filtering
     )
+
+
+@router.post("/{product_id}/image", response_model=schemas.ProductOut)
+async def upload_product_image(
+    product_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_not_analyst),
+):
+    """Upload or replace a product image. Stored in S3 under products/{id}/."""
+    import uuid
+    from utils.s3 import upload_bytes, presigned_url as s3_presigned
+
+    p = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not p:
+        raise HTTPException(404, "Product not found")
+
+    ext = (file.filename or "image.jpg").rsplit(".", 1)[-1].lower()
+    if ext not in {"jpg", "jpeg", "png", "webp", "gif"}:
+        raise HTTPException(400, "Unsupported image format. Use jpg, png, webp or gif.")
+
+    content = await file.read()
+    s3_key = f"products/{product_id}/{uuid.uuid4()}.{ext}"
+    content_type = file.content_type or f"image/{ext}"
+    upload_bytes(s3_key, content, content_type)
+
+    # Store the S3 key (not the URL) — presigned URL generated on read
+    p.image_url = s3_key
+    audit.log(db, models.AuditAction.update, models.AuditEntity.product, p.id,
+               current_user.id, description=f"Updated image for {p.product_name}")
+    db.commit()
+    db.refresh(p)
+    return _enrich(p, db)
+
+
+@router.delete("/{product_id}/image", response_model=schemas.ProductOut)
+def delete_product_image(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_not_analyst),
+):
+    """Remove the image from a product."""
+    from utils.s3 import delete_object
+
+    p = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not p:
+        raise HTTPException(404, "Product not found")
+
+    if p.image_url:
+        delete_object(p.image_url)
+        p.image_url = None
+        db.commit()
+        db.refresh(p)
+    return _enrich(p, db)
 
 
 @router.get("/template")
