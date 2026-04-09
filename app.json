@@ -1,0 +1,102 @@
+{
+  "name": "foodstuff-store-api",
+  "description": "Foodstuff Store Quotation & Invoicing API (FastAPI + Railway PostgreSQL)",
+  "keywords": ["fastapi", "python", "invoicing", "paystack"],
+  "website": "",
+  "repository": "",
+  "logo": "",
+  "stack": "heroku-22",
+  "buildpacks": [
+    { "url": "heroku/python" }
+  ],
+  "env": {
+    "DATABASE_URL": {
+      "description": "Railway PostgreSQL URL — postgresql://postgres:PASSWORD@postgres-production-5653.up.railway.app:PORT/railway",
+      "required": true
+    },
+    "SECRET_KEY": {
+      "description": "Long random string used to sign JWT tokens",
+      "generator": "secret"
+    },
+    "ACCESS_TOKEN_EXPIRE_MINUTES": {
+      "description": "JWT token lifetime in minutes",
+      "value": "480"
+    },
+    "ALLOWED_ORIGINS": {
+      "description": "Comma-separated list of allowed frontend origins",
+      "required": false
+    },
+    "REDIS_URL": {
+      "description": "Redis URL for Celery broker — set by Heroku Redis add-on automatically",
+      "required": false
+    },
+    "PAYSTACK_SECRET_KEY": {
+      "description": "Paystack secret key (sk_live_... or sk_test_...)",
+      "required": false
+    },
+    "PAYSTACK_PUBLIC_KEY": {
+      "description": "Paystack public key (pk_live_... or pk_test_...)",
+      "required": false
+    },
+    "SMTP_HOST": {
+      "description": "SMTP server hostname",
+      "value": "smtp.gmail.com",
+      "required": false
+    },
+    "SMTP_PORT": {
+      "description": "SMTP server port",
+      "value": "587",
+      "required": false
+    },
+    "SMTP_USE_SSL": {
+      "description": "true for port 465 SSL, false for port 587 STARTTLS",
+      "value": "false",
+      "required": false
+    },
+    "SMTP_USER": {
+      "description": "SMTP login username / email",
+      "required": false
+    },
+    "SMTP_PASSWORD": {
+      "description": "SMTP login password or app password",
+      "required": false
+    },
+    "SMTP_FROM_NAME": {
+      "description": "Display name in outgoing emails",
+      "value": "Foodstuff Store",
+      "required": false
+    },
+    "SMTP_FROM_EMAIL": {
+      "description": "From address in outgoing emails",
+      "required": false
+    },
+    "FRONTEND_URL": {
+      "description": "Frontend URL used in password-reset email links",
+      "required": false
+    },
+    "JOB_OUTPUT_DIR": {
+      "description": "Temporary directory for generated PDFs and reports",
+      "value": "/tmp/foodstuff_jobs"
+    },
+    "JOB_INPUT_DIR": {
+      "description": "Temporary directory for uploaded files",
+      "value": "/tmp/foodstuff_uploads"
+    }
+  },
+  "addons": [
+    {
+      "plan": "heroku-redis:mini",
+      "as": "REDIS"
+    }
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "eco"
+    },
+    "worker": {
+      "quantity": 1,
+      "size": "eco"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "*",
+      "Read(//Users/mac/Desktop/desktop2/untitled_folder_2/foodstuffstore/newinventoryfrontend/**)"
+    ]
+  }
+}

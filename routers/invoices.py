@@ -1,0 +1,120 @@
+from typing import List, Optional
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from database import get_db
+from dependencies import get_current_user, require_admin_or_manager
+import models
+import schemas
+from utils import audit
+from utils.tasks import generate_invoice_pdf_task
+
+router = APIRouter(prefix="/invoices", tags=["Invoices"])
+
+
+@router.get("/approved-quotations", response_model=List[schemas.QuotationOut])
+def list_convertible_quotations(
+    customer_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Return approved quotations that have not yet been converted to invoices."""
+    q = (
+        db.query(models.Quotation)
+        .outerjoin(models.Invoice, models.Invoice.quotation_id == models.Quotation.id)
+        .filter(
+            models.Quotation.status == models.QuotationStatus.approved,
+            models.Invoice.id == None,
+        )
+    )
+    if customer_id:
+        q = q.filter(models.Quotation.customer_id == customer_id)
+    return q.order_by(models.Quotation.approved_at.desc()).all()
+
+
+@router.get("", response_model=List[schemas.InvoiceOut])
+def list_invoices(
+    skip: int = 0,
+    limit: int = 50,
+    customer_id: Optional[int] = None,
+    status: Optional[str] = None,
+    created_by: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    payment_term: Optional[str] = None,
+    delivery_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    q = db.query(models.Invoice)
+    if customer_id:
+        q = q.filter(models.Invoice.customer_id == customer_id)
+    if status:
+        q = q.filter(models.Invoice.status == status)
+    if created_by:
+        q = q.filter(models.Invoice.created_by == created_by)
+    if date_from:
+        q = q.filter(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        q = q.filter(models.Invoice.invoice_date <= date_to)
+    if payment_term:
+        q = q.filter(models.Invoice.payment_term == payment_term)
+    if delivery_type:
+        q = q.filter(models.Invoice.delivery_type == delivery_type)
+    return q.order_by(models.Invoice.created_at.desc()).offset(skip).limit(limit).all()
+
+
+@router.get("/{invoice_id}", response_model=schemas.InvoiceOut)
+def get_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+    return inv
+
+
+@router.post("/{invoice_id}/generate-pdf", response_model=schemas.JobEnqueuedResponse,
+             status_code=202)
+def generate_invoice_pdf(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """
+    Queue PDF generation. Returns a task_id immediately (< 5 ms).
+    Poll GET /api/v1/jobs/{task_id}, then download via GET /api/v1/jobs/{task_id}/download.
+    """
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+
+    task = generate_invoice_pdf_task.delay(invoice_id)
+    return schemas.JobEnqueuedResponse(
+        task_id=task.id,
+        message=f"PDF generation queued for {inv.invoice_number}. "
+                f"Poll /api/v1/jobs/{task.id} for status.",
+    )
+
+
+@router.post("/{invoice_id}/cancel", response_model=schemas.InvoiceOut)
+def cancel_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin_or_manager),
+):
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+    if inv.status == models.InvoiceStatus.cancelled:
+        raise HTTPException(400, "Invoice is already cancelled")
+    inv.status = models.InvoiceStatus.cancelled
+    audit.log(db, models.AuditAction.cancel, models.AuditEntity.invoice, inv.id,
+               current_user.id, description=f"Cancelled invoice {inv.invoice_number}")
+    db.commit()
+    db.refresh(inv)
+    return inv
