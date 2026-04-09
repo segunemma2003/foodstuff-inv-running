@@ -226,6 +226,25 @@ def product_analytics(
     )
 
 
+@router.get("/template")
+def download_template(_: models.User = Depends(get_current_user)):
+    """Download Excel template for bulk product upload."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Products"
+    ws.append(["product_name", "sku", "unit_of_measure", "category_name"])
+    ws.append(["Rice 50kg", "RICE-50KG", "Bag", "Grains"])
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=product_template.xlsx"},
+    )
+
+
 @router.post("/bulk-upload", response_model=schemas.JobEnqueuedResponse, status_code=202)
 async def bulk_upload_products(
     file: UploadFile = File(...),
