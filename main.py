@@ -31,9 +31,9 @@ def seed_defaults(db: Session):
     if not admin:
         admin = models.User(
             username="admin",
-            email="admin@foodstuffstore.com",
+            email="admin@foodstuff.store",
             full_name="System Administrator",
-            hashed_password=hash_password("Admin@12345"),
+            hashed_password=hash_password("admin123"),
             role=models.UserRole.admin,
         )
         db.add(admin)
