@@ -10,12 +10,15 @@ import urllib.request
 from io import BytesIO
 from datetime import date
 from decimal import Decimal
-from typing import List
+from typing import List, Optional
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import cm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
+from reportlab.platypus import (
+    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
+    HRFlowable, Image as RLImage,
+)
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
 from reportlab.pdfbase import pdfmetrics
@@ -27,6 +30,10 @@ import models
 BRAND_COLOR = colors.HexColor("#1a5276")
 LIGHT_GRAY  = colors.HexColor("#f2f3f4")
 GREEN       = colors.HexColor("#1e8449")
+AMBER       = colors.HexColor("#d35400")
+
+# Logo path (copied alongside this file)
+_LOGO_PATH = os.path.join(os.path.dirname(__file__), "foodstuff.png")
 
 # ── Unicode font bootstrap ────────────────────────────────────────────────────
 
@@ -89,21 +96,30 @@ def _styles():
     s.add(ParagraphStyle("CenterAlign", parent=s["Normal"], alignment=TA_CENTER, fontName=_FONT))
     s.add(ParagraphStyle("BoldNormal",  parent=s["Normal"], fontName=_FONT_B))
     s.add(ParagraphStyle("DocTitle",    parent=s["Heading1"], textColor=BRAND_COLOR,
-                         fontSize=18, spaceAfter=6, fontName=_FONT_B))
+                         fontSize=16, spaceAfter=2, fontName=_FONT_B))
+    s.add(ParagraphStyle("DocSubtitle", parent=s["Normal"], textColor=BRAND_COLOR,
+                         fontSize=10, fontName=_FONT))
     s.add(ParagraphStyle("SmallMuted",  parent=s["Normal"], fontSize=8,
                          textColor=colors.grey, fontName=_FONT))
+    s.add(ParagraphStyle("LinkStyle",   parent=s["Normal"], fontSize=9,
+                         textColor=colors.HexColor("#1a5276"), fontName=_FONT))
     s["Normal"].fontName = _FONT
     return s
 
 
 def _header_table(doc_type: str, number: str, doc_date: date, styles) -> Table:
-    data = [[
-        Paragraph("<b>FOODSTUFF STORE</b>", styles["DocTitle"]),
-        Paragraph(
-            f"<b>{doc_type}</b><br/>{number}<br/>{doc_date.strftime('%d %b %Y')}",
-            styles["RightAlign"],
-        ),
-    ]]
+    """Logo + company name on the left; document type/number/date on the right."""
+    left_cells = []
+    if os.path.exists(_LOGO_PATH):
+        left_cells.append(RLImage(_LOGO_PATH, width=1.8 * cm, height=1.8 * cm))
+    left_cells.append(Paragraph("<b>FOODSTUFF STORE</b>", styles["DocTitle"]))
+
+    right = Paragraph(
+        f"<b>{doc_type}</b><br/>{number}<br/>{doc_date.strftime('%d %b %Y')}",
+        styles["RightAlign"],
+    )
+
+    data = [[left_cells, right]]
     t = Table(data, colWidths=[10 * cm, 8 * cm])
     t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
     return t
@@ -121,42 +137,42 @@ def _customer_table(customer: models.Customer, styles) -> Table:
     body = "<br/>".join(l for l in lines if l)
     data = [[Paragraph(body, styles["Normal"])]]
     t = Table(data, colWidths=[18 * cm])
-    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, colors.grey)]))
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                            ("TOPPADDING", (0, 0), (-1, -1), 6),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 8)]))
     return t
 
 
 def _items_table(items: list, styles) -> Table:
-    header = [
-        "Product", "Qty", "UOM", "Cost Price",
-        "Supply Mkp", "Del. Mkp", "PT Mkp",
-        "Unit Price", "Line Total",
-    ]
+    """Simplified 5-column table: Product | UOM | Unit Price | Qty | Sub Total."""
+    header = ["Product", "UOM", "Unit Price", "Qty", "Sub Total"]
     rows = [header]
     for item in items:
         rows.append([
             item.product.product_name if item.product else str(item.product_id),
-            f"{item.quantity:,.3f}",
             getattr(item, "uom", None) or "—",
-            _fc(item.cost_price),
-            f"{_fc(item.supply_markup_amount)} ({item.supply_markup_pct}%)",
-            f"{_fc(item.delivery_markup_amount)} ({item.delivery_markup_pct}%)",
-            f"{_fc(item.payment_term_markup_amount)} ({item.payment_term_markup_pct}%)",
             _fc(item.unit_price),
+            f"{item.quantity:,.3f}",
             _fc(item.line_total),
         ])
 
-    col_widths = [3 * cm, 1.4 * cm, 1.4 * cm, 2 * cm, 2.3 * cm, 2 * cm, 2 * cm, 2 * cm, 2 * cm]
+    # Full usable width = 18cm (A4 21cm - 1.5cm margins each side)
+    col_widths = [7 * cm, 2 * cm, 3 * cm, 2 * cm, 4 * cm]
     t = Table(rows, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         ("BACKGROUND",     (0, 0), (-1, 0),  BRAND_COLOR),
         ("TEXTCOLOR",      (0, 0), (-1, 0),  colors.white),
         ("FONTNAME",       (0, 0), (-1, 0),  _FONT_B),
         ("FONTNAME",       (0, 1), (-1, -1), _FONT),
-        ("FONTSIZE",       (0, 0), (-1, -1), 8),
+        ("FONTSIZE",       (0, 0), (-1, -1), 9),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT_GRAY]),
         ("GRID",           (0, 0), (-1, -1), 0.3, colors.grey),
-        ("ALIGN",          (1, 1), (-1, -1), "RIGHT"),
+        ("ALIGN",          (2, 0), (-1, -1), "RIGHT"),   # price/qty/total columns right-aligned
+        ("ALIGN",          (1, 0), (1, -1),  "CENTER"),  # UOM centered
         ("VALIGN",         (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",     (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING",  (0, 0), (-1, -1), 5),
     ]))
     return t
 
@@ -178,39 +194,84 @@ def _totals_table(total_amount: Decimal, amount_paid: Decimal, styles) -> Table:
         ])
     t = Table(rows, colWidths=[9 * cm, 5 * cm, 4 * cm])
     t.setStyle(TableStyle([
-        ("LINEABOVE", (1, 0), (-1, 0), 1, BRAND_COLOR),
+        ("LINEABOVE", (1, 0), (-1, 0), 1.5, BRAND_COLOR),
         ("FONTNAME",  (0, 0), (-1, -1), _FONT),
+        ("FONTSIZE",  (0, 0), (-1, -1), 10),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
     return t
 
 
-def _bank_accounts_table(accounts: list, styles) -> Table:
-    """Render company bank accounts for the customer to pay into."""
+def _bank_accounts_section(accounts: list, styles) -> list:
+    """Return a list of flowables showing bank transfer details."""
     if not accounts:
-        return None
+        return []
     rows = [[
-        Paragraph("<b>Pay Into</b>", styles["BoldNormal"]),
         Paragraph("<b>Bank</b>", styles["BoldNormal"]),
         Paragraph("<b>Account Number</b>", styles["BoldNormal"]),
         Paragraph("<b>Account Name</b>", styles["BoldNormal"]),
     ]]
     for acc in accounts:
-        rows.append([
-            "★" if acc.is_default else "",
-            acc.bank_name or "",
-            acc.account_number or "",
-            acc.account_name or "",
-        ])
-    t = Table(rows, colWidths=[1 * cm, 5 * cm, 5 * cm, 7 * cm])
+        label = acc.bank_name or ""
+        if acc.is_default:
+            label = f"★ {label}"
+        rows.append([label, acc.account_number or "", acc.account_name or ""])
+
+    t = Table(rows, colWidths=[5 * cm, 5 * cm, 8 * cm])
     t.setStyle(TableStyle([
         ("BACKGROUND",  (0, 0), (-1, 0), LIGHT_GRAY),
         ("FONTNAME",    (0, 0), (-1, 0), _FONT_B),
         ("FONTNAME",    (0, 1), (-1, -1), _FONT),
-        ("FONTSIZE",    (0, 0), (-1, -1), 8),
+        ("FONTSIZE",    (0, 0), (-1, -1), 9),
         ("GRID",        (0, 0), (-1, -1), 0.3, colors.grey),
         ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",  (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
-    return t
+    return [t]
+
+
+def _payment_options_section(bank_accounts: list, paystack_url: Optional[str],
+                              styles) -> list:
+    """Render a 'How to Pay' section for invoice PDFs."""
+    has_bank = bool(bank_accounts)
+    has_paystack = bool(paystack_url)
+    if not has_bank and not has_paystack:
+        return []
+
+    flowables = [
+        Spacer(1, 0.4 * cm),
+        HRFlowable(width="100%", thickness=1, color=BRAND_COLOR),
+        Spacer(1, 0.2 * cm),
+        Paragraph("<b>How to Pay</b>", styles["BoldNormal"]),
+        Spacer(1, 0.2 * cm),
+    ]
+
+    if has_paystack:
+        flowables += [
+            Paragraph("<b>Option 1 — Pay Online (Paystack)</b>", styles["BoldNormal"]),
+            Spacer(1, 0.1 * cm),
+            Paragraph(
+                f'Click or visit the link below to pay securely online:<br/>'
+                f'<link href="{paystack_url}" color="#1a5276">{paystack_url}</link>',
+                styles["LinkStyle"],
+            ),
+            Spacer(1, 0.3 * cm),
+        ]
+
+    if has_bank:
+        title = f"<b>Option {'2' if has_paystack else '1'} — Bank Transfer</b>"
+        flowables += [
+            Paragraph(title, styles["BoldNormal"]),
+            Spacer(1, 0.1 * cm),
+            Paragraph("Transfer payment to any of the accounts below and send your receipt to us:",
+                      styles["Normal"]),
+            Spacer(1, 0.15 * cm),
+        ]
+        flowables += _bank_accounts_section(bank_accounts, styles)
+
+    return flowables
 
 
 # ── Public generators ─────────────────────────────────────────────────────────
@@ -252,7 +313,11 @@ def generate_quotation_pdf(quotation: models.Quotation) -> bytes:
     return buf.getvalue()
 
 
-def generate_invoice_pdf(invoice: models.Invoice, bank_accounts: list = None) -> bytes:
+def generate_invoice_pdf(
+    invoice: models.Invoice,
+    bank_accounts: list = None,
+    paystack_url: Optional[str] = None,
+) -> bytes:
     _ensure_unicode_font()
     buf  = BytesIO()
     doc  = SimpleDocTemplate(buf, pagesize=A4,
@@ -285,20 +350,18 @@ def generate_invoice_pdf(invoice: models.Invoice, bank_accounts: list = None) ->
     story.append(Spacer(1, 0.3 * cm))
     story.append(_totals_table(invoice.total_amount, invoice.amount_paid or Decimal("0"), styles))
 
-    # Bank accounts section
-    if bank_accounts:
-        story.append(Spacer(1, 0.5 * cm))
-        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.grey))
-        story.append(Spacer(1, 0.2 * cm))
-        story.append(Paragraph("<b>Payment Details</b>", styles["BoldNormal"]))
-        story.append(Spacer(1, 0.2 * cm))
-        tbl = _bank_accounts_table(bank_accounts, styles)
-        if tbl:
-            story.append(tbl)
+    # Payment options (Paystack + bank transfer)
+    story += _payment_options_section(bank_accounts or [], paystack_url, styles)
 
     if invoice.notes:
         story.append(Spacer(1, 0.5 * cm))
         story.append(Paragraph(f"<b>Notes:</b> {invoice.notes}", styles["Normal"]))
+
+    story.append(Spacer(1, 1 * cm))
+    story.append(Paragraph(
+        "Thank you for your business. Please keep this invoice for your records.",
+        styles["SmallMuted"],
+    ))
 
     doc.build(story)
     return buf.getvalue()
@@ -322,13 +385,19 @@ def generate_payment_receipt(payment: models.Payment) -> bytes:
     else:
         date_str = str(receipt_date)
 
-    # Header
-    story.append(Paragraph("<b>FOODSTUFF STORE</b>", styles["DocTitle"]))
-    story.append(Paragraph(
-        "<b>PAYMENT RECEIPT</b>",
-        ParagraphStyle("ReceiptTitle", parent=styles["Normal"], fontName=_FONT_B,
-                       fontSize=14, textColor=GREEN, spaceAfter=4),
-    ))
+    # Header with logo
+    header_left = []
+    if os.path.exists(_LOGO_PATH):
+        header_left.append(RLImage(_LOGO_PATH, width=1.8 * cm, height=1.8 * cm))
+    header_left.append(Paragraph("<b>FOODSTUFF STORE</b>", styles["DocTitle"]))
+    header_left.append(Paragraph("<b>PAYMENT RECEIPT</b>",
+                                  ParagraphStyle("ReceiptTitle", parent=styles["Normal"],
+                                                 fontName=_FONT_B, fontSize=13,
+                                                 textColor=GREEN, spaceAfter=4)))
+
+    hdr = Table([[header_left, ""]], colWidths=[14 * cm, 3 * cm])
+    hdr.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(hdr)
     story.append(Spacer(1, 0.4 * cm))
 
     # Receipt details table

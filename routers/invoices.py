@@ -100,7 +100,20 @@ def download_invoice_pdf(
         .all()
     )
 
-    pdf_bytes = gen_pdf(inv, bank_accounts=bank_accounts)
+    # Find the most recent pending Paystack payment URL for this invoice
+    paystack_payment = (
+        db.query(models.Payment)
+        .filter(
+            models.Payment.invoice_id == invoice_id,
+            models.Payment.paystack_payment_url.isnot(None),
+            models.Payment.status == models.PaymentStatus.pending,
+        )
+        .order_by(models.Payment.created_at.desc())
+        .first()
+    )
+    paystack_url = paystack_payment.paystack_payment_url if paystack_payment else None
+
+    pdf_bytes = gen_pdf(inv, bank_accounts=bank_accounts, paystack_url=paystack_url)
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
