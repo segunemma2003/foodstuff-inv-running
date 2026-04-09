@@ -10,7 +10,7 @@ import urllib.request
 from io import BytesIO
 from datetime import date
 from decimal import Decimal
-from typing import List, Optional
+from typing import Optional
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -27,10 +27,13 @@ from reportlab.pdfbase.ttfonts import TTFont
 import models
 
 
-BRAND_COLOR = colors.HexColor("#1a5276")
-LIGHT_GRAY  = colors.HexColor("#f2f3f4")
-GREEN       = colors.HexColor("#1e8449")
-AMBER       = colors.HexColor("#d35400")
+BRAND_COLOR  = colors.HexColor("#1a5276")
+BRAND_LIGHT  = colors.HexColor("#d6eaf8")   # very light blue tint for alternating rows
+BRAND_MID    = colors.HexColor("#2e86c1")   # slightly lighter brand for accents
+GREEN        = colors.HexColor("#1e8449")
+GREEN_LIGHT  = colors.HexColor("#eafaf1")
+WHITE        = colors.white
+LIGHT_GRAY   = colors.HexColor("#f2f3f4")
 
 # Logo path (copied alongside this file)
 _LOGO_PATH = os.path.join(os.path.dirname(__file__), "foodstuff.png")
@@ -79,7 +82,7 @@ def _ensure_unicode_font():
         pdfmetrics.registerFont(TTFont("DejaVu-Bold", bold_path))
         _FONT, _FONT_B, _FONT_READY = "DejaVu", "DejaVu-Bold", True
     except Exception:
-        _FONT_READY = True   # keep Helvetica, use NGN fallback
+        _FONT_READY = True
 
 
 def _fc(amount) -> str:
@@ -87,65 +90,109 @@ def _fc(amount) -> str:
     return f"{prefix}{amount:,.2f}"
 
 
-# ── Style helpers ─────────────────────────────────────────────────────────────
+# ── Styles ─────────────────────────────────────────────────────────────────────
 
 def _styles():
     _ensure_unicode_font()
     s = getSampleStyleSheet()
-    s.add(ParagraphStyle("RightAlign",  parent=s["Normal"], alignment=TA_RIGHT, fontName=_FONT))
-    s.add(ParagraphStyle("CenterAlign", parent=s["Normal"], alignment=TA_CENTER, fontName=_FONT))
-    s.add(ParagraphStyle("BoldNormal",  parent=s["Normal"], fontName=_FONT_B))
-    s.add(ParagraphStyle("DocTitle",    parent=s["Heading1"], textColor=BRAND_COLOR,
-                         fontSize=16, spaceAfter=2, fontName=_FONT_B))
-    s.add(ParagraphStyle("DocSubtitle", parent=s["Normal"], textColor=BRAND_COLOR,
-                         fontSize=10, fontName=_FONT))
-    s.add(ParagraphStyle("SmallMuted",  parent=s["Normal"], fontSize=8,
-                         textColor=colors.grey, fontName=_FONT))
-    s.add(ParagraphStyle("LinkStyle",   parent=s["Normal"], fontSize=9,
-                         textColor=colors.HexColor("#1a5276"), fontName=_FONT))
     s["Normal"].fontName = _FONT
+    s["Normal"].fontSize = 9
+
+    s.add(ParagraphStyle("Right",      parent=s["Normal"], alignment=TA_RIGHT))
+    s.add(ParagraphStyle("Center",     parent=s["Normal"], alignment=TA_CENTER))
+    s.add(ParagraphStyle("Bold",       parent=s["Normal"], fontName=_FONT_B))
+    s.add(ParagraphStyle("BoldRight",  parent=s["Normal"], fontName=_FONT_B, alignment=TA_RIGHT))
+
+    # White text (for colored backgrounds)
+    s.add(ParagraphStyle("WhiteNormal", parent=s["Normal"], textColor=WHITE))
+    s.add(ParagraphStyle("WhiteBold",   parent=s["Normal"], fontName=_FONT_B,
+                         textColor=WHITE, fontSize=10))
+    s.add(ParagraphStyle("WhiteTitle",  parent=s["Normal"], fontName=_FONT_B,
+                         textColor=WHITE, fontSize=15))
+    s.add(ParagraphStyle("WhiteRight",  parent=s["Normal"], textColor=WHITE,
+                         alignment=TA_RIGHT, fontSize=9))
+    s.add(ParagraphStyle("WhiteRightBold", parent=s["Normal"], fontName=_FONT_B,
+                         textColor=WHITE, alignment=TA_RIGHT, fontSize=11))
+
+    s.add(ParagraphStyle("Muted",      parent=s["Normal"], textColor=colors.grey, fontSize=8))
+    s.add(ParagraphStyle("Link",       parent=s["Normal"], textColor=BRAND_MID, fontSize=9))
+
+    # Section header (brand colored label)
+    s.add(ParagraphStyle("SectionHdr", parent=s["Normal"], fontName=_FONT_B,
+                         textColor=WHITE, fontSize=9))
     return s
 
 
-def _header_table(doc_type: str, number: str, doc_date: date, styles) -> Table:
-    """Logo + company name on the left; document type/number/date on the right."""
-    left_cells = []
+# ── Shared blocks ──────────────────────────────────────────────────────────────
+
+def _header_band(doc_type: str, number: str, doc_date: date, styles) -> Table:
+    """Full-width brand-color header: logo+name on left, doc type/number/date on right."""
+    left = []
     if os.path.exists(_LOGO_PATH):
-        left_cells.append(RLImage(_LOGO_PATH, width=1.8 * cm, height=1.8 * cm))
-    left_cells.append(Paragraph("<b>FOODSTUFF STORE</b>", styles["DocTitle"]))
+        left.append(RLImage(_LOGO_PATH, width=1.6 * cm, height=1.6 * cm))
+    left.append(Paragraph("FOODSTUFF STORE", styles["WhiteTitle"]))
 
-    right = Paragraph(
-        f"<b>{doc_type}</b><br/>{number}<br/>{doc_date.strftime('%d %b %Y')}",
-        styles["RightAlign"],
-    )
+    right = [
+        Paragraph(doc_type, styles["WhiteRightBold"]),
+        Paragraph(number, styles["WhiteRight"]),
+        Paragraph(doc_date.strftime("%d %b %Y"), styles["WhiteRight"]),
+    ]
 
-    data = [[left_cells, right]]
-    t = Table(data, colWidths=[10 * cm, 8 * cm])
-    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    t = Table([[left, right]], colWidths=[10 * cm, 8 * cm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), BRAND_COLOR),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ("LEFTPADDING",   (0, 0), (0, -1),  12),
+        ("RIGHTPADDING",  (1, 0), (1, -1),  12),
+    ]))
     return t
 
 
-def _customer_table(customer: models.Customer, styles) -> Table:
+def _bill_to(customer: models.Customer, styles) -> Table:
+    """Customer block with brand-color left accent bar."""
     name  = customer.business_name or customer.customer_name
-    lines = [
-        f"<b>Bill To:</b> {name}",
-        customer.address or "",
-        customer.city    or "",
-        customer.phone   or "",
-        customer.email   or "",
-    ]
-    body = "<br/>".join(l for l in lines if l)
-    data = [[Paragraph(body, styles["Normal"])]]
-    t = Table(data, colWidths=[18 * cm])
-    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
-                            ("TOPPADDING", (0, 0), (-1, -1), 6),
-                            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                            ("LEFTPADDING", (0, 0), (-1, -1), 8)]))
+    lines = [f"<b>Bill To</b>", name]
+    for val in [customer.address, customer.city, customer.phone, customer.email]:
+        if val:
+            lines.append(val)
+    body = "<br/>".join(lines)
+
+    # Two-column: thin brand color stripe | content
+    t = Table([[
+        "",
+        Paragraph(body, styles["Normal"]),
+    ]], colWidths=[0.25 * cm, 17.75 * cm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (0, -1), BRAND_COLOR),
+        ("BACKGROUND",    (1, 0), (1, -1), BRAND_LIGHT),
+        ("TOPPADDING",    (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING",   (1, 0), (1, -1),  10),
+        ("RIGHTPADDING",  (1, 0), (1, -1),  10),
+    ]))
+    return t
+
+
+def _meta_table(rows_data: list, styles) -> Table:
+    """Key-value meta rows (payment term, delivery, etc.) with brand-tinted background."""
+    rows = [[Paragraph(cell, styles["Normal"]) for cell in row] for row in rows_data]
+    t = Table(rows, colWidths=[6 * cm, 6 * cm, 6 * cm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), BRAND_LIGHT),
+        ("FONTNAME",      (0, 0), (-1, -1), _FONT),
+        ("FONTSIZE",      (0, 0), (-1, -1), 9),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ("BOX",           (0, 0), (-1, -1), 0.5, BRAND_COLOR),
+    ]))
     return t
 
 
 def _items_table(items: list, styles) -> Table:
-    """Simplified 5-column table: Product | UOM | Unit Price | Qty | Sub Total."""
+    """Product | UOM | Unit Price | Qty | Sub Total."""
     header = ["Product", "UOM", "Unit Price", "Qty", "Sub Total"]
     rows = [header]
     for item in items:
@@ -157,119 +204,150 @@ def _items_table(items: list, styles) -> Table:
             _fc(item.line_total),
         ])
 
-    # Full usable width = 18cm (A4 21cm - 1.5cm margins each side)
     col_widths = [7 * cm, 2 * cm, 3 * cm, 2 * cm, 4 * cm]
     t = Table(rows, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
+        # Header row — brand color
         ("BACKGROUND",     (0, 0), (-1, 0),  BRAND_COLOR),
-        ("TEXTCOLOR",      (0, 0), (-1, 0),  colors.white),
+        ("TEXTCOLOR",      (0, 0), (-1, 0),  WHITE),
         ("FONTNAME",       (0, 0), (-1, 0),  _FONT_B),
+        # Data rows — alternate white / very light brand
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, BRAND_LIGHT]),
         ("FONTNAME",       (0, 1), (-1, -1), _FONT),
         ("FONTSIZE",       (0, 0), (-1, -1), 9),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT_GRAY]),
-        ("GRID",           (0, 0), (-1, -1), 0.3, colors.grey),
-        ("ALIGN",          (2, 0), (-1, -1), "RIGHT"),   # price/qty/total columns right-aligned
-        ("ALIGN",          (1, 0), (1, -1),  "CENTER"),  # UOM centered
+        ("GRID",           (0, 0), (-1, -1), 0.3, BRAND_COLOR),
+        ("ALIGN",          (2, 0), (-1, -1), "RIGHT"),
+        ("ALIGN",          (1, 0), (1, -1),  "CENTER"),
         ("VALIGN",         (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",     (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING",  (0, 0), (-1, -1), 5),
+        ("TOPPADDING",     (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING",  (0, 0), (-1, -1), 6),
     ]))
     return t
 
 
 def _totals_table(total_amount: Decimal, amount_paid: Decimal, styles) -> Table:
     balance = max(Decimal("0"), total_amount - amount_paid)
-    rows = [
-        ["", Paragraph("<b>TOTAL AMOUNT</b>", styles["RightAlign"]),
-         Paragraph(f"<b>{_fc(total_amount)}</b>", styles["RightAlign"])],
+
+    # Total row: brand color background with white text
+    total_row = [
+        "",
+        Paragraph("TOTAL AMOUNT", styles["WhiteRightBold"]),
+        Paragraph(_fc(total_amount), styles["WhiteRightBold"]),
     ]
+    rows = [total_row]
+    style_cmds = [
+        ("BACKGROUND",    (1, 0), (-1, 0), BRAND_COLOR),
+        ("FONTNAME",      (0, 0), (-1, -1), _FONT),
+        ("FONTSIZE",      (0, 0), (-1, -1), 10),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]
+
     if amount_paid > 0:
         rows.append([
-            "", Paragraph("Amount Paid", styles["RightAlign"]),
-            Paragraph(_fc(amount_paid), styles["RightAlign"]),
+            "",
+            Paragraph("Amount Paid", styles["Right"]),
+            Paragraph(_fc(amount_paid), styles["Right"]),
         ])
         rows.append([
-            "", Paragraph("<b>Balance Due</b>", styles["RightAlign"]),
-            Paragraph(f"<b>{_fc(balance)}</b>", styles["RightAlign"]),
+            "",
+            Paragraph("Balance Due", styles["BoldRight"]),
+            Paragraph(f"<b>{_fc(balance)}</b>", styles["BoldRight"]),
         ])
+        style_cmds += [
+            ("BACKGROUND", (1, 1), (-1, 1), BRAND_LIGHT),
+            ("BACKGROUND", (1, 2), (-1, 2), BRAND_COLOR),
+            ("TEXTCOLOR",  (1, 2), (-1, 2), WHITE),
+        ]
+
     t = Table(rows, colWidths=[9 * cm, 5 * cm, 4 * cm])
+    t.setStyle(TableStyle(style_cmds))
+    return t
+
+
+def _section_header(title: str, styles) -> Table:
+    """A full-width brand-color section label."""
+    t = Table([[Paragraph(title, styles["SectionHdr"])]], colWidths=[18 * cm])
     t.setStyle(TableStyle([
-        ("LINEABOVE", (1, 0), (-1, 0), 1.5, BRAND_COLOR),
-        ("FONTNAME",  (0, 0), (-1, -1), _FONT),
-        ("FONTSIZE",  (0, 0), (-1, -1), 10),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("BACKGROUND",    (0, 0), (-1, -1), BRAND_COLOR),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
     ]))
     return t
 
 
-def _bank_accounts_section(accounts: list, styles) -> list:
-    """Return a list of flowables showing bank transfer details."""
-    if not accounts:
-        return []
+def _bank_table(accounts: list, styles) -> Table:
     rows = [[
-        Paragraph("<b>Bank</b>", styles["BoldNormal"]),
-        Paragraph("<b>Account Number</b>", styles["BoldNormal"]),
-        Paragraph("<b>Account Name</b>", styles["BoldNormal"]),
+        Paragraph("<b>Bank</b>", styles["Bold"]),
+        Paragraph("<b>Account Number</b>", styles["Bold"]),
+        Paragraph("<b>Account Name</b>", styles["Bold"]),
     ]]
     for acc in accounts:
-        label = acc.bank_name or ""
-        if acc.is_default:
-            label = f"★ {label}"
+        label = ("★ " if acc.is_default else "") + (acc.bank_name or "")
         rows.append([label, acc.account_number or "", acc.account_name or ""])
 
     t = Table(rows, colWidths=[5 * cm, 5 * cm, 8 * cm])
     t.setStyle(TableStyle([
-        ("BACKGROUND",  (0, 0), (-1, 0), LIGHT_GRAY),
-        ("FONTNAME",    (0, 0), (-1, 0), _FONT_B),
-        ("FONTNAME",    (0, 1), (-1, -1), _FONT),
-        ("FONTSIZE",    (0, 0), (-1, -1), 9),
-        ("GRID",        (0, 0), (-1, -1), 0.3, colors.grey),
-        ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",  (0, 0), (-1, -1), 5),
+        ("BACKGROUND",    (0, 0), (-1, 0), BRAND_LIGHT),
+        ("FONTNAME",      (0, 0), (-1, 0), _FONT_B),
+        ("FONTNAME",      (0, 1), (-1, -1), _FONT),
+        ("FONTSIZE",      (0, 0), (-1, -1), 9),
+        ("GRID",          (0, 0), (-1, -1), 0.3, BRAND_COLOR),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
-    return [t]
+    return t
 
 
-def _payment_options_section(bank_accounts: list, paystack_url: Optional[str],
-                              styles) -> list:
-    """Render a 'How to Pay' section for invoice PDFs."""
-    has_bank = bool(bank_accounts)
+def _footer(styles) -> Table:
+    """Brand-colored footer bar."""
+    t = Table(
+        [[Paragraph("Thank you for your business — Foodstuff Store", styles["WhiteNormal"])]],
+        colWidths=[18 * cm],
+    )
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), BRAND_COLOR),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+    ]))
+    return t
+
+
+def _payment_options(bank_accounts: list, paystack_url: Optional[str], styles) -> list:
+    has_bank     = bool(bank_accounts)
     has_paystack = bool(paystack_url)
     if not has_bank and not has_paystack:
         return []
 
-    flowables = [
-        Spacer(1, 0.4 * cm),
-        HRFlowable(width="100%", thickness=1, color=BRAND_COLOR),
-        Spacer(1, 0.2 * cm),
-        Paragraph("<b>How to Pay</b>", styles["BoldNormal"]),
-        Spacer(1, 0.2 * cm),
-    ]
+    flowables = [Spacer(1, 0.4 * cm), _section_header("HOW TO PAY", styles), Spacer(1, 0.2 * cm)]
 
     if has_paystack:
         flowables += [
-            Paragraph("<b>Option 1 — Pay Online (Paystack)</b>", styles["BoldNormal"]),
+            Paragraph("<b>Option 1 — Pay Online (Paystack)</b>", styles["Bold"]),
             Spacer(1, 0.1 * cm),
             Paragraph(
-                f'Click or visit the link below to pay securely online:<br/>'
-                f'<link href="{paystack_url}" color="#1a5276">{paystack_url}</link>',
-                styles["LinkStyle"],
+                f'Visit the link below to pay securely online:<br/>'
+                f'<link href="{paystack_url}" color="#2e86c1">{paystack_url}</link>',
+                styles["Link"],
             ),
             Spacer(1, 0.3 * cm),
         ]
 
     if has_bank:
-        title = f"<b>Option {'2' if has_paystack else '1'} — Bank Transfer</b>"
+        opt = "2" if has_paystack else "1"
         flowables += [
-            Paragraph(title, styles["BoldNormal"]),
+            Paragraph(f"<b>Option {opt} — Bank Transfer</b>", styles["Bold"]),
             Spacer(1, 0.1 * cm),
-            Paragraph("Transfer payment to any of the accounts below and send your receipt to us:",
-                      styles["Normal"]),
+            Paragraph(
+                "Transfer to any of the accounts below, then send your proof of payment to us.",
+                styles["Normal"],
+            ),
             Spacer(1, 0.15 * cm),
+            _bank_table(bank_accounts, styles),
         ]
-        flowables += _bank_accounts_section(bank_accounts, styles)
 
     return flowables
 
@@ -278,36 +356,34 @@ def _payment_options_section(bank_accounts: list, paystack_url: Optional[str],
 
 def generate_quotation_pdf(quotation: models.Quotation) -> bytes:
     _ensure_unicode_font()
-    buf  = BytesIO()
-    doc  = SimpleDocTemplate(buf, pagesize=A4,
-                             rightMargin=1.5*cm, leftMargin=1.5*cm,
-                             topMargin=1.5*cm,  bottomMargin=1.5*cm)
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            rightMargin=1.5*cm, leftMargin=1.5*cm,
+                            topMargin=1.5*cm,  bottomMargin=1.5*cm)
     styles = _styles()
     story  = []
 
-    story.append(_header_table("QUOTATION", quotation.quotation_number,
+    story.append(_header_band("QUOTATION", quotation.quotation_number,
                                quotation.quotation_date, styles))
-    story.append(Spacer(1, 0.5 * cm))
-    story.append(_customer_table(quotation.customer, styles))
+    story.append(Spacer(1, 0.4 * cm))
+    story.append(_bill_to(quotation.customer, styles))
     story.append(Spacer(1, 0.3 * cm))
-
-    meta = [[
+    story.append(_meta_table([[
         f"Payment Term: {quotation.payment_term}",
         f"Delivery: {quotation.delivery_type.value}",
         f"Status: {quotation.status.value}",
-    ]]
-    mt = Table(meta, colWidths=[6*cm, 6*cm, 6*cm])
-    mt.setStyle(TableStyle([("FONTNAME", (0,0),(-1,-1),_FONT), ("FONTSIZE",(0,0),(-1,-1),9)]))
-    story.append(mt)
+    ]], styles))
     story.append(Spacer(1, 0.4 * cm))
-
     story.append(_items_table(quotation.items, styles))
     story.append(Spacer(1, 0.3 * cm))
     story.append(_totals_table(quotation.total_amount, Decimal("0"), styles))
 
     if quotation.notes:
-        story.append(Spacer(1, 0.5 * cm))
+        story.append(Spacer(1, 0.4 * cm))
         story.append(Paragraph(f"<b>Notes:</b> {quotation.notes}", styles["Normal"]))
+
+    story.append(Spacer(1, 0.6 * cm))
+    story.append(_footer(styles))
 
     doc.build(story)
     return buf.getvalue()
@@ -319,146 +395,156 @@ def generate_invoice_pdf(
     paystack_url: Optional[str] = None,
 ) -> bytes:
     _ensure_unicode_font()
-    buf  = BytesIO()
-    doc  = SimpleDocTemplate(buf, pagesize=A4,
-                             rightMargin=1.5*cm, leftMargin=1.5*cm,
-                             topMargin=1.5*cm,  bottomMargin=1.5*cm)
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            rightMargin=1.5*cm, leftMargin=1.5*cm,
+                            topMargin=1.5*cm,  bottomMargin=1.5*cm)
     styles = _styles()
     story  = []
 
-    story.append(_header_table("INVOICE", invoice.invoice_number,
+    story.append(_header_band("INVOICE", invoice.invoice_number,
                                invoice.invoice_date, styles))
-    story.append(Spacer(1, 0.5 * cm))
-    story.append(_customer_table(invoice.customer, styles))
+    story.append(Spacer(1, 0.4 * cm))
+    story.append(_bill_to(invoice.customer, styles))
     story.append(Spacer(1, 0.3 * cm))
 
     due_str = invoice.due_date.strftime("%d %b %Y") if invoice.due_date else "—"
-    meta = [
+    story.append(_meta_table([
         [f"Payment Term: {invoice.payment_term}",
          f"Delivery: {invoice.delivery_type.value}",
          f"Due Date: {due_str}"],
         [f"Quotation Ref: {invoice.quotation.quotation_number if invoice.quotation else '—'}",
          "",
          f"Status: {invoice.status.value}"],
-    ]
-    mt = Table(meta, colWidths=[6*cm, 6*cm, 6*cm])
-    mt.setStyle(TableStyle([("FONTNAME",(0,0),(-1,-1),_FONT), ("FONTSIZE",(0,0),(-1,-1),9)]))
-    story.append(mt)
+    ], styles))
     story.append(Spacer(1, 0.4 * cm))
-
     story.append(_items_table(invoice.items, styles))
     story.append(Spacer(1, 0.3 * cm))
     story.append(_totals_table(invoice.total_amount, invoice.amount_paid or Decimal("0"), styles))
 
-    # Payment options (Paystack + bank transfer)
-    story += _payment_options_section(bank_accounts or [], paystack_url, styles)
+    story += _payment_options(bank_accounts or [], paystack_url, styles)
 
     if invoice.notes:
-        story.append(Spacer(1, 0.5 * cm))
+        story.append(Spacer(1, 0.4 * cm))
         story.append(Paragraph(f"<b>Notes:</b> {invoice.notes}", styles["Normal"]))
 
-    story.append(Spacer(1, 1 * cm))
-    story.append(Paragraph(
-        "Thank you for your business. Please keep this invoice for your records.",
-        styles["SmallMuted"],
-    ))
+    story.append(Spacer(1, 0.6 * cm))
+    story.append(_footer(styles))
 
     doc.build(story)
     return buf.getvalue()
 
 
 def generate_payment_receipt(payment: models.Payment) -> bytes:
-    """Generate a PDF receipt for a single confirmed payment."""
     _ensure_unicode_font()
-    buf  = BytesIO()
-    doc  = SimpleDocTemplate(buf, pagesize=A4,
-                             rightMargin=2*cm, leftMargin=2*cm,
-                             topMargin=2*cm,  bottomMargin=2*cm)
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            rightMargin=1.5*cm, leftMargin=1.5*cm,
+                            topMargin=1.5*cm,  bottomMargin=1.5*cm)
     styles = _styles()
     story  = []
 
     inv      = payment.invoice
     customer = inv.customer if inv else None
     receipt_date = payment.confirmed_at or payment.payment_date or date.today()
-    if hasattr(receipt_date, "strftime"):
-        date_str = receipt_date.strftime("%d %b %Y")
-    else:
-        date_str = str(receipt_date)
+    date_str = receipt_date.strftime("%d %b %Y") if hasattr(receipt_date, "strftime") else str(receipt_date)
 
-    # Header with logo
-    header_left = []
+    # ── Header band ──────────────────────────────────────────────────────────
+    left = []
     if os.path.exists(_LOGO_PATH):
-        header_left.append(RLImage(_LOGO_PATH, width=1.8 * cm, height=1.8 * cm))
-    header_left.append(Paragraph("<b>FOODSTUFF STORE</b>", styles["DocTitle"]))
-    header_left.append(Paragraph("<b>PAYMENT RECEIPT</b>",
-                                  ParagraphStyle("ReceiptTitle", parent=styles["Normal"],
-                                                 fontName=_FONT_B, fontSize=13,
-                                                 textColor=GREEN, spaceAfter=4)))
+        left.append(RLImage(_LOGO_PATH, width=1.6 * cm, height=1.6 * cm))
+    left.append(Paragraph("FOODSTUFF STORE", styles["WhiteTitle"]))
+    left.append(Paragraph("PAYMENT RECEIPT", styles["WhiteBold"]))
 
-    hdr = Table([[header_left, ""]], colWidths=[14 * cm, 3 * cm])
-    hdr.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    hdr = Table([[left, Paragraph(date_str, styles["WhiteRight"])]], colWidths=[12 * cm, 6 * cm])
+    hdr.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), BRAND_COLOR),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ("LEFTPADDING",   (0, 0), (0, -1),  12),
+        ("RIGHTPADDING",  (1, 0), (1, -1),  12),
+    ]))
     story.append(hdr)
-    story.append(Spacer(1, 0.4 * cm))
+    story.append(Spacer(1, 0.5 * cm))
 
-    # Receipt details table
-    def row(label, value):
-        return [
-            Paragraph(f"<b>{label}</b>", styles["Normal"]),
-            Paragraph(str(value), styles["Normal"]),
-        ]
-
+    # ── Details table ─────────────────────────────────────────────────────────
     method = (payment.payment_method.value if hasattr(payment.payment_method, "value")
                else str(payment.payment_method)).replace("_", " ").title()
     ref = payment.paystack_reference or payment.notes or "—"
 
-    detail_rows = [
-        row("Receipt No.",      f"RCP-{payment.id:05d}"),
-        row("Date",             date_str),
-        row("Invoice No.",      inv.invoice_number if inv else "—"),
-        row("Customer",         customer.customer_name if customer else "—"),
-        row("Business",         (customer.business_name or "—") if customer else "—"),
-        row("Payment Method",   method),
-        row("Reference",        ref),
-        row("Amount Received",  _fc(payment.amount)),
+    def drow(label, value, highlight=False):
+        bg = BRAND_LIGHT if highlight else WHITE
+        return [
+            Paragraph(f"<b>{label}</b>", styles["Bold"]),
+            Paragraph(str(value), styles["Normal"]),
+            bg,  # used below for per-row background
+        ]
+
+    detail_data = [
+        ["Receipt No.",    f"RCP-{payment.id:05d}"],
+        ["Invoice No.",    inv.invoice_number if inv else "—"],
+        ["Customer",       customer.customer_name if customer else "—"],
+        ["Business",       (customer.business_name or "—") if customer else "—"],
+        ["Payment Method", method],
+        ["Reference",      ref],
+        ["Amount Received", _fc(payment.amount)],
     ]
     if inv:
         balance = max(Decimal("0"), inv.total_amount - (inv.amount_paid or Decimal("0")))
-        detail_rows.append(row("Invoice Total", _fc(inv.total_amount)))
-        detail_rows.append(row("Balance Due",   _fc(balance)))
+        detail_data += [
+            ["Invoice Total", _fc(inv.total_amount)],
+            ["Balance Due",   _fc(balance)],
+        ]
 
-    dt = Table(detail_rows, colWidths=[5 * cm, 12 * cm])
+    det_rows = [[Paragraph(f"<b>{r[0]}</b>", styles["Bold"]),
+                 Paragraph(str(r[1]), styles["Normal"])] for r in detail_data]
+
+    dt = Table(det_rows, colWidths=[5 * cm, 13 * cm])
     dt.setStyle(TableStyle([
-        ("FONTNAME",       (0, 0), (-1, -1), _FONT),
         ("FONTSIZE",       (0, 0), (-1, -1), 10),
-        ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.white, LIGHT_GRAY]),
-        ("GRID",           (0, 0), (-1, -1), 0.3, colors.grey),
+        ("ROWBACKGROUNDS", (0, 0), (-1, -1), [WHITE, BRAND_LIGHT]),
+        ("GRID",           (0, 0), (-1, -1), 0.3, BRAND_COLOR),
         ("VALIGN",         (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",     (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING",  (0, 0), (-1, -1), 5),
+        ("TOPPADDING",     (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING",  (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",    (0, 0), (-1, -1), 8),
+        # Highlight the amount row
+        ("BACKGROUND",     (0, 6), (-1, 6), BRAND_COLOR),
+        ("TEXTCOLOR",      (0, 6), (-1, 6), WHITE),
+        ("FONTNAME",       (0, 6), (-1, 6), _FONT_B),
     ]))
     story.append(dt)
-    story.append(Spacer(1, 0.8 * cm))
+    story.append(Spacer(1, 0.6 * cm))
 
-    # PAID stamp
+    # ── Confirmation stamp ────────────────────────────────────────────────────
     if payment.status and payment.status.value == "confirmed":
-        stamp = Table([[Paragraph("<b>✓  PAYMENT CONFIRMED</b>",
-                                   ParagraphStyle("Stamp", parent=styles["CenterAlign"],
+        stamp = Table([[Paragraph("✓  PAYMENT CONFIRMED",
+                                   ParagraphStyle("Stamp", parent=styles["Center"],
                                                   fontName=_FONT_B, fontSize=14,
-                                                  textColor=GREEN))]],
-                      colWidths=[17 * cm])
+                                                  textColor=GREEN))]], colWidths=[18 * cm])
         stamp.setStyle(TableStyle([
-            ("BOX",        (0, 0), (-1, -1), 2, GREEN),
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eafaf1")),
-            ("TOPPADDING",    (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("BOX",           (0, 0), (-1, -1), 2.5, GREEN),
+            ("BACKGROUND",    (0, 0), (-1, -1), GREEN_LIGHT),
+            ("TOPPADDING",    (0, 0), (-1, -1), 10),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
         ]))
         story.append(stamp)
 
-    story.append(Spacer(1, 1 * cm))
-    story.append(Paragraph(
-        "Thank you for your payment. Please keep this receipt for your records.",
-        styles["SmallMuted"],
-    ))
+    story.append(Spacer(1, 0.6 * cm))
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    ft = Table(
+        [[Paragraph("Thank you for your payment — Foodstuff Store", styles["WhiteNormal"])]],
+        colWidths=[18 * cm],
+    )
+    ft.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), BRAND_COLOR),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+    ]))
+    story.append(ft)
 
     doc.build(story)
     return buf.getvalue()
