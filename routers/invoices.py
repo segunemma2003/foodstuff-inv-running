@@ -78,6 +78,36 @@ def get_invoice(
     return inv
 
 
+@router.get("/{invoice_id}/pdf")
+def download_invoice_pdf(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Stream invoice PDF directly (synchronous — no polling needed)."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from utils.pdf_generator import generate_invoice_pdf as gen_pdf
+
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+
+    bank_accounts = (
+        db.query(models.PaymentAccount)
+        .filter(models.PaymentAccount.is_active == True)
+        .order_by(models.PaymentAccount.is_default.desc())
+        .all()
+    )
+
+    pdf_bytes = gen_pdf(inv, bank_accounts=bank_accounts)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{inv.invoice_number}.pdf"'},
+    )
+
+
 @router.post("/{invoice_id}/generate-pdf", response_model=schemas.JobEnqueuedResponse,
              status_code=202)
 def generate_invoice_pdf(

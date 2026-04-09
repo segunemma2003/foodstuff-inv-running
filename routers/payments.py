@@ -127,6 +127,32 @@ def invoice_payment_summary(
     )
 
 
+@router.get("/{payment_id}/receipt")
+def download_payment_receipt(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Stream a PDF payment receipt for a confirmed payment."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from utils.pdf_generator import generate_payment_receipt
+
+    p = db.query(models.Payment).filter(models.Payment.id == payment_id).first()
+    if not p:
+        raise HTTPException(404, "Payment not found")
+    if p.status != models.PaymentStatus.confirmed:
+        raise HTTPException(400, "Receipt is only available for confirmed payments")
+
+    pdf_bytes = generate_payment_receipt(p)
+    filename = f"receipt-{p.invoice.invoice_number if p.invoice else payment_id}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/{payment_id}", response_model=schemas.PaymentOut)
 def get_payment(
     payment_id: int,
