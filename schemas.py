@@ -258,6 +258,8 @@ class PricingRuleOut(BaseModel):
 class QuotationItemCreate(BaseModel):
     product_id: int
     quantity: Decimal
+    uom: Optional[str] = None
+    unit_price_override: Optional[Decimal] = None  # if set, skips markup calculation
 
 
 class QuotationCreate(BaseModel):
@@ -310,6 +312,7 @@ class QuotationItemOut(BaseModel):
     product: Optional[ProductOut] = None
     product_name: Optional[str] = None   # flat convenience from model property
     quantity: Decimal
+    uom: Optional[str] = None
     cost_price: Decimal
     supply_markup_pct: Decimal
     supply_markup_amount: Decimal
@@ -357,6 +360,7 @@ class InvoiceItemOut(BaseModel):
     product: Optional[ProductOut] = None
     product_name: Optional[str] = None      # flat from model property
     quantity: Decimal
+    uom: Optional[str] = None
     cost_price: Decimal
     supply_markup_pct: Decimal
     supply_markup_amount: Decimal

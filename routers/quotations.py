@@ -49,13 +49,25 @@ def _calc_and_build_items(
             )
         pricing = calculate_item_price(cost, delivery_type, payment_term, rules)
         qty = Decimal(str(it.quantity))
-        unit_price = Decimal(str(pricing["unit_price"]))
+
+        # Use manual override if provided, else calculated price
+        if it.unit_price_override is not None:
+            unit_price = Decimal(str(it.unit_price_override))
+        else:
+            unit_price = Decimal(str(pricing["unit_price"]))
         line_total = (qty * unit_price).quantize(Decimal("0.01"))
         total += line_total
+
+        # Resolve UOM: explicit override > product default > None
+        uom = it.uom
+        if not uom:
+            product = db.query(models.Product).filter(models.Product.id == it.product_id).first()
+            uom = product.unit_of_measure if product else None
 
         built.append(models.QuotationItem(
             product_id=it.product_id,
             quantity=qty,
+            uom=uom,
             cost_price=cost,
             supply_markup_pct=Decimal(str(pricing["supply_markup_pct"])),
             supply_markup_amount=Decimal(str(pricing["supply_markup_amount"])),
@@ -439,6 +451,7 @@ def convert_to_invoice(
             invoice_id=invoice.id,
             product_id=qi.product_id,
             quantity=qi.quantity,
+            uom=qi.uom,
             cost_price=qi.cost_price,
             supply_markup_pct=qi.supply_markup_pct,
             supply_markup_amount=qi.supply_markup_amount,

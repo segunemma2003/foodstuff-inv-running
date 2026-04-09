@@ -239,6 +239,7 @@ class QuotationItem(Base):
     quotation_id = Column(Integer, ForeignKey("quotations.id"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     quantity = Column(Numeric(15, 3), nullable=False)
+    uom = Column(String(50), nullable=True)
     # Pricing snapshot
     cost_price = Column(Numeric(15, 2), nullable=False)
     supply_markup_pct = Column(Numeric(6, 3), nullable=False)
@@ -295,6 +296,7 @@ class InvoiceItem(Base):
     invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     quantity = Column(Numeric(15, 3), nullable=False)
+    uom = Column(String(50), nullable=True)
     cost_price = Column(Numeric(15, 2), nullable=False)
     supply_markup_pct = Column(Numeric(6, 3), nullable=False)
     supply_markup_amount = Column(Numeric(15, 2), nullable=False)
