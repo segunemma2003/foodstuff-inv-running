@@ -232,22 +232,20 @@ async def bulk_upload_products(
     current_user: models.User = Depends(require_not_analyst),
 ):
     """
-    Save the uploaded Excel to disk and queue parsing via Celery.
+    Upload an Excel file to S3 and queue parsing via Celery.
     Returns a task_id immediately (< 50 ms). Poll /api/v1/jobs/{task_id} for result.
 
     Expected columns: product_name, sku (optional), unit_of_measure (optional), category_name (optional)
     """
-    import os
     import uuid
-    from utils.tasks import process_product_bulk_task, JOB_INPUT_DIR
+    from utils.s3 import upload_bytes
+    from utils.tasks import process_product_bulk_task
 
-    os.makedirs(JOB_INPUT_DIR, exist_ok=True)
-    dest = os.path.join(JOB_INPUT_DIR, f"{uuid.uuid4()}.xlsx")
     content = await file.read()
-    with open(dest, "wb") as fh:
-        fh.write(content)
+    s3_key = f"uploads/{uuid.uuid4()}.xlsx"
+    upload_bytes(s3_key, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    task = process_product_bulk_task.delay(dest, current_user.id)
+    task = process_product_bulk_task.delay(s3_key, current_user.id)
     return schemas.JobEnqueuedResponse(
         task_id=task.id,
         message=f"Bulk upload queued. Poll /api/v1/jobs/{task.id} for result.",

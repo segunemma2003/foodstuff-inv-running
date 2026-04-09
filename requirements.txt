@@ -19,3 +19,5 @@ psycopg2-binary==2.9.9
 celery[redis]==5.4.0
 redis==5.1.1
 flower==2.0.1
+# AWS S3 (file uploads, generated PDFs/reports)
+boto3==1.35.36

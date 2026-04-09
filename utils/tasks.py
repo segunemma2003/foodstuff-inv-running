@@ -5,6 +5,9 @@ All tasks are imported by the worker via `include=["utils.tasks"]` in celery_app
 The API side only calls `.delay()` / `.apply_async()` — it never runs the body directly,
 so the API response is always dispatched in < 1 ms.
 
+Generated files (PDFs, reports) are stored in S3 under the `jobs/` prefix.
+Uploaded input files are stored in S3 under the `uploads/` prefix and deleted after use.
+
 Task categories
 ───────────────
   Email        → send_email_task
@@ -12,17 +15,8 @@ Task categories
   Reports      → generate_report_task
   Bulk upload  → process_cost_price_bulk_task, process_product_bulk_task
 """
-import os
 from celery_app import celery_app
 from utils.email import send_email
-
-JOB_OUTPUT_DIR = os.getenv("JOB_OUTPUT_DIR", "/tmp/foodstuff_jobs")
-JOB_INPUT_DIR = os.getenv("JOB_INPUT_DIR", "/tmp/foodstuff_uploads")
-
-
-def _ensure_dirs():
-    os.makedirs(JOB_OUTPUT_DIR, exist_ok=True)
-    os.makedirs(JOB_INPUT_DIR, exist_ok=True)
 
 
 # ─── Email ────────────────────────────────────────────────────────────────────
@@ -40,10 +34,10 @@ def send_email_task(self, to: str, subject: str, html: str, text: str = ""):
 
 @celery_app.task(bind=True, name="generate_quotation_pdf")
 def generate_quotation_pdf_task(self, quotation_id: int):
-    _ensure_dirs()
     from database import SessionLocal
     import models
     from utils.pdf_generator import generate_quotation_pdf
+    from utils.s3 import upload_bytes
 
     db = SessionLocal()
     try:
@@ -52,11 +46,10 @@ def generate_quotation_pdf_task(self, quotation_id: int):
             raise ValueError(f"Quotation {quotation_id} not found")
 
         pdf_bytes = generate_quotation_pdf(q)
-        filepath = os.path.join(JOB_OUTPUT_DIR, f"{self.request.id}.pdf")
-        with open(filepath, "wb") as fh:
-            fh.write(pdf_bytes)
+        s3_key = f"jobs/{self.request.id}.pdf"
+        upload_bytes(s3_key, pdf_bytes, "application/pdf")
         return {
-            "filepath": filepath,
+            "s3_key": s3_key,
             "filename": f"{q.quotation_number}.pdf",
             "content_type": "application/pdf",
         }
@@ -66,10 +59,10 @@ def generate_quotation_pdf_task(self, quotation_id: int):
 
 @celery_app.task(bind=True, name="generate_invoice_pdf")
 def generate_invoice_pdf_task(self, invoice_id: int):
-    _ensure_dirs()
     from database import SessionLocal
     import models
     from utils.pdf_generator import generate_invoice_pdf
+    from utils.s3 import upload_bytes
 
     db = SessionLocal()
     try:
@@ -78,11 +71,10 @@ def generate_invoice_pdf_task(self, invoice_id: int):
             raise ValueError(f"Invoice {invoice_id} not found")
 
         pdf_bytes = generate_invoice_pdf(inv)
-        filepath = os.path.join(JOB_OUTPUT_DIR, f"{self.request.id}.pdf")
-        with open(filepath, "wb") as fh:
-            fh.write(pdf_bytes)
+        s3_key = f"jobs/{self.request.id}.pdf"
+        upload_bytes(s3_key, pdf_bytes, "application/pdf")
         return {
-            "filepath": filepath,
+            "s3_key": s3_key,
             "filename": f"{inv.invoice_number}.pdf",
             "content_type": "application/pdf",
         }
@@ -95,24 +87,28 @@ def generate_invoice_pdf_task(self, invoice_id: int):
 @celery_app.task(bind=True, name="generate_report")
 def generate_report_task(self, report_type: str, params: dict):
     """
-    Build an Excel report and save it to disk.
+    Build an Excel report and upload it to S3.
     `params` is a plain dict with string values (JSON-safe).
     """
-    _ensure_dirs()
+    from io import BytesIO
     from database import SessionLocal
     from utils.report_builder import build_report
+    from utils.s3 import upload_bytes
 
     db = SessionLocal()
     try:
         wb, filename = build_report(report_type, params, db)
-        filepath = os.path.join(JOB_OUTPUT_DIR, f"{self.request.id}.xlsx")
-        wb.save(filepath)
+        buf = BytesIO()
+        wb.save(buf)
+        content_type = (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        s3_key = f"jobs/{self.request.id}.xlsx"
+        upload_bytes(s3_key, buf.getvalue(), content_type)
         return {
-            "filepath": filepath,
+            "s3_key": s3_key,
             "filename": filename,
-            "content_type": (
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
+            "content_type": content_type,
         }
     finally:
         db.close()
@@ -121,19 +117,22 @@ def generate_report_task(self, report_type: str, params: dict):
 # ─── Bulk uploads ─────────────────────────────────────────────────────────────
 
 @celery_app.task(bind=True, name="process_cost_price_bulk")
-def process_cost_price_bulk_task(self, filepath: str, user_id: int):
+def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
     """
-    Parse an uploaded Excel file and insert cost price records.
-    The source file is deleted after processing (success or failure).
+    Download an Excel file from S3, parse cost price records, insert into DB.
+    The S3 object is deleted after processing (success or failure).
     """
+    from io import BytesIO
     from database import SessionLocal
     import models
     import openpyxl
     from datetime import date as date_type
+    from utils.s3 import download_bytes, delete_object
 
     db = SessionLocal()
     try:
-        wb = openpyxl.load_workbook(filepath)
+        raw = download_bytes(s3_key)
+        wb = openpyxl.load_workbook(BytesIO(raw))
         ws = wb.active
         headers = [
             str(c.value).strip().lower() if c.value else ""
@@ -181,22 +180,22 @@ def process_cost_price_bulk_task(self, filepath: str, user_id: int):
         raise
     finally:
         db.close()
-        try:
-            os.remove(filepath)
-        except OSError:
-            pass
+        delete_object(s3_key)
 
 
 @celery_app.task(bind=True, name="process_product_bulk")
-def process_product_bulk_task(self, filepath: str, user_id: int):
-    """Parse an uploaded Excel file and insert product records."""
+def process_product_bulk_task(self, s3_key: str, user_id: int):
+    """Download an Excel file from S3, parse and insert product records."""
+    from io import BytesIO
     from database import SessionLocal
     import models
     import openpyxl
+    from utils.s3 import download_bytes, delete_object
 
     db = SessionLocal()
     try:
-        wb = openpyxl.load_workbook(filepath)
+        raw = download_bytes(s3_key)
+        wb = openpyxl.load_workbook(BytesIO(raw))
         ws = wb.active
         headers = [
             str(c.value).strip().lower() if c.value else ""
@@ -236,7 +235,4 @@ def process_product_bulk_task(self, filepath: str, user_id: int):
         raise
     finally:
         db.close()
-        try:
-            os.remove(filepath)
-        except OSError:
-            pass
+        delete_object(s3_key)

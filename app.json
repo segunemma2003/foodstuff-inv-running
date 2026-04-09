@@ -74,13 +74,21 @@
       "description": "Frontend URL used in password-reset email links",
       "required": false
     },
-    "JOB_OUTPUT_DIR": {
-      "description": "Temporary directory for generated PDFs and reports",
-      "value": "/tmp/foodstuff_jobs"
+    "AWS_ACCESS_KEY_ID": {
+      "description": "AWS IAM access key — needs s3:PutObject, s3:GetObject, s3:DeleteObject on your bucket",
+      "required": true
     },
-    "JOB_INPUT_DIR": {
-      "description": "Temporary directory for uploaded files",
-      "value": "/tmp/foodstuff_uploads"
+    "AWS_SECRET_ACCESS_KEY": {
+      "description": "AWS IAM secret key",
+      "required": true
+    },
+    "AWS_S3_BUCKET": {
+      "description": "S3 bucket name for uploaded files and generated PDFs/reports",
+      "required": true
+    },
+    "AWS_S3_REGION": {
+      "description": "AWS region where the S3 bucket lives",
+      "value": "us-east-1"
     }
   },
   "addons": [

@@ -98,23 +98,21 @@ async def bulk_upload_cost_prices(
     current_user: models.User = Depends(require_not_analyst),
 ):
     """
-    Save the uploaded Excel to disk and queue parsing via Celery.
+    Upload an Excel file to S3 and queue parsing via Celery.
     Returns a task_id immediately (< 50 ms). Poll /api/v1/jobs/{task_id} for result.
 
     Required columns: sku, cost_price, effective_date
     Optional:         notes
     """
-    import os
-    from utils.tasks import process_cost_price_bulk_task, JOB_INPUT_DIR
-
-    os.makedirs(JOB_INPUT_DIR, exist_ok=True)
     import uuid
-    dest = os.path.join(JOB_INPUT_DIR, f"{uuid.uuid4()}.xlsx")
-    content = await file.read()
-    with open(dest, "wb") as fh:
-        fh.write(content)
+    from utils.s3 import upload_bytes
+    from utils.tasks import process_cost_price_bulk_task
 
-    task = process_cost_price_bulk_task.delay(dest, current_user.id)
+    content = await file.read()
+    s3_key = f"uploads/{uuid.uuid4()}.xlsx"
+    upload_bytes(s3_key, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    task = process_cost_price_bulk_task.delay(s3_key, current_user.id)
     return schemas.JobEnqueuedResponse(
         task_id=task.id,
         message=f"Bulk upload queued. Poll /api/v1/jobs/{task.id} for result.",
