@@ -15,6 +15,7 @@ from utils.number_gen import next_quotation_number
 from utils.tasks import (
     generate_quotation_pdf_task,
     send_email_task,
+    send_quotation_to_customer_task,
 )
 from utils.email import (
     tpl_quotation_submitted,
@@ -318,6 +319,50 @@ def reject_quotation(
         send_email_task.delay(creator.email, subject, html, text)
 
     return q
+
+
+@router.get("/{quotation_id}/pdf")
+def download_quotation_pdf(
+    quotation_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Stream the quotation PDF directly (synchronous — no polling needed)."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from utils.pdf_generator import generate_quotation_pdf as gen_pdf
+
+    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not q:
+        raise HTTPException(404, "Quotation not found")
+
+    pdf_bytes = gen_pdf(q)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{q.quotation_number}.pdf"'},
+    )
+
+
+@router.post("/{quotation_id}/send-to-customer", response_model=schemas.MessageResponse)
+def send_quotation_to_customer(
+    quotation_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_not_analyst),
+):
+    """Email the quotation PDF to the customer. Queued via Celery."""
+    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not q:
+        raise HTTPException(404, "Quotation not found")
+    if q.status == models.QuotationStatus.draft:
+        raise HTTPException(400, "Submit the quotation before sending it to the customer")
+    if not q.customer or not q.customer.email:
+        raise HTTPException(400, "Customer has no email address on file")
+
+    send_quotation_to_customer_task.delay(quotation_id)
+    return schemas.MessageResponse(
+        message=f"Quotation {q.quotation_number} queued for delivery to {q.customer.email}"
+    )
 
 
 @router.post("/{quotation_id}/generate-pdf", response_model=schemas.JobEnqueuedResponse,

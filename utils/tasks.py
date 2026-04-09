@@ -114,6 +114,45 @@ def generate_report_task(self, report_type: str, params: dict):
         db.close()
 
 
+# ─── Send quotation to customer ──────────────────────────────────────────────
+
+@celery_app.task(bind=True, name="send_quotation_to_customer", max_retries=3, default_retry_delay=60)
+def send_quotation_to_customer_task(self, quotation_id: int):
+    """Generate the quotation PDF and email it to the customer with the PDF attached."""
+    from database import SessionLocal
+    import models
+    from utils.pdf_generator import generate_quotation_pdf
+    from utils.email import send_email, tpl_quotation_to_customer
+
+    db = SessionLocal()
+    try:
+        q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+        if q is None:
+            raise ValueError(f"Quotation {quotation_id} not found")
+
+        customer_email = q.customer.email if q.customer else None
+        if not customer_email:
+            raise ValueError(f"Customer has no email address")
+
+        pdf_bytes = generate_quotation_pdf(q)
+        subject, html, text = tpl_quotation_to_customer(
+            q.quotation_number,
+            q.customer.customer_name,
+            float(q.total_amount),
+        )
+        send_email(
+            to=customer_email,
+            subject=subject,
+            html=html,
+            text=text,
+            attachments=[(f"{q.quotation_number}.pdf", pdf_bytes, "application/pdf")],
+        )
+    except Exception as exc:
+        raise self.retry(exc=exc)
+    finally:
+        db.close()
+
+
 # ─── Bulk uploads ─────────────────────────────────────────────────────────────
 
 @celery_app.task(bind=True, name="process_cost_price_bulk")

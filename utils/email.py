@@ -24,19 +24,43 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 # ─── Core sender ─────────────────────────────────────────────────────────────
 
-def send_email(to: str, subject: str, html: str, text: str = "") -> None:
-    """Send an email via SMTP. Raises on failure so Celery can retry."""
+def send_email(
+    to: str,
+    subject: str,
+    html: str,
+    text: str = "",
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> None:
+    """
+    Send an email via SMTP. Raises on failure so Celery can retry.
+
+    attachments: list of (filename, data_bytes, mime_type) tuples
+    """
+    from email.mime.base import MIMEBase
+    from email import encoders
+
     if not SMTP_USER or not SMTP_PASSWORD:
         print(f"[EMAIL SKIP — SMTP not configured]  To={to!r}  Subject={subject!r}")
         return
 
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
     msg["To"] = to
+
+    alt = MIMEMultipart("alternative")
     if text:
-        msg.attach(MIMEText(text, "plain", "utf-8"))
-    msg.attach(MIMEText(html, "html", "utf-8"))
+        alt.attach(MIMEText(text, "plain", "utf-8"))
+    alt.attach(MIMEText(html, "html", "utf-8"))
+    msg.attach(alt)
+
+    for filename, data, mime_type in (attachments or []):
+        main_type, sub_type = mime_type.split("/", 1)
+        part = MIMEBase(main_type, sub_type)
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        msg.attach(part)
 
     if SMTP_USE_SSL:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as srv:
@@ -137,6 +161,48 @@ def tpl_invoice_created(
       </table>
     </div>"""
     text = f"Invoice {invoice_number} (ref: {quotation_number}) for {customer_name} — ₦{total:,.2f}"
+    return subject, html, text
+
+
+def tpl_quotation_to_customer(
+    quotation_number: str,
+    customer_name: str,
+    total: float,
+    valid_days: int = 30,
+    company_name: str = "Foodstuff Store",
+) -> tuple[str, str, str]:
+    """Quotation email sent to a customer with the PDF attached."""
+    subject = f"Quotation {quotation_number} from {company_name}"
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:560px">
+      <h2 style="color:#1a5276">Quotation from {company_name}</h2>
+      <p>Dear <b>{customer_name}</b>,</p>
+      <p>Please find attached your quotation <b>{quotation_number}</b>.</p>
+      <table style="border-collapse:collapse;width:100%;margin:16px 0">
+        <tr style="background:#f2f4f6">
+          <td style="padding:10px;font-weight:bold">Quotation Number</td>
+          <td style="padding:10px">{quotation_number}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px;font-weight:bold">Total Amount</td>
+          <td style="padding:10px;font-weight:bold">&#8358;{total:,.2f}</td>
+        </tr>
+        <tr style="background:#f2f4f6">
+          <td style="padding:10px;font-weight:bold">Valid For</td>
+          <td style="padding:10px">{valid_days} days</td>
+        </tr>
+      </table>
+      <p>Please review the attached PDF. To accept, kindly reply to this email or contact us directly.</p>
+      <hr/>
+      <p style="font-size:12px;color:#888">{company_name}</p>
+    </div>"""
+    text = (
+        f"Dear {customer_name},\n\n"
+        f"Please find attached quotation {quotation_number} for ₦{total:,.2f}.\n"
+        f"Valid for {valid_days} days.\n\n"
+        f"Please review and contact us to proceed.\n\n"
+        f"{company_name}"
+    )
     return subject, html, text
 
 
