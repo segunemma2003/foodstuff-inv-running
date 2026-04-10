@@ -466,6 +466,101 @@ class StaffPerformanceOut(BaseModel):
     conversion_rate: float
 
 
+# ─── Comprehensive Stats ─────────────────────────────────────────────────────
+
+class QuotationStats(BaseModel):
+    total: int
+    draft: int
+    pending_approval: int
+    approved: int
+    rejected: int
+    converted: int
+    approval_rate: float          # approved / submitted
+    rejection_rate: float         # rejected / submitted
+    conversion_rate: float        # converted / approved
+    total_value: float
+
+
+class InvoiceStats(BaseModel):
+    total: int
+    active: int
+    partially_paid: int
+    paid: int
+    cancelled: int
+    paid_rate: float              # paid / total non-cancelled
+    cancel_rate: float            # cancelled / total
+    total_billed: float
+    total_collected: float
+    total_outstanding: float
+    collection_rate: float        # collected / billed (non-cancelled)
+
+
+class PaymentStats(BaseModel):
+    total: int
+    pending: int
+    confirmed: int
+    voided: int
+    failed: int
+    total_amount: float
+    confirmed_amount: float
+    pending_amount: float
+
+
+class SalesPersonStats(BaseModel):
+    user_id: int
+    full_name: str
+    username: str
+    role: str
+    # Quotation breakdown
+    quotations_total: int
+    quotations_draft: int
+    quotations_pending: int
+    quotations_approved: int
+    quotations_rejected: int
+    quotations_converted: int
+    quotation_approval_rate: float
+    quotation_conversion_rate: float
+    # Invoice breakdown
+    invoices_total: int
+    invoices_paid: int
+    invoices_partially_paid: int
+    invoices_active: int
+    invoices_cancelled: int
+    total_billed: float
+    total_collected: float
+    total_outstanding: float
+    collection_rate: float
+    avg_invoice_value: float
+
+
+class ManagerStats(BaseModel):
+    user_id: int
+    full_name: str
+    username: str
+    # Approval activity
+    reviewed_total: int           # approved + rejected
+    approved_count: int
+    rejected_count: int
+    approval_rate: float
+    rejection_rate: float
+    # Revenue from approved deals
+    revenue_approved: float
+    # Top sales people they manage (by revenue)
+    top_sales: List[dict]
+
+
+class ComprehensiveStats(BaseModel):
+    quotations: QuotationStats
+    invoices: InvoiceStats
+    payments: PaymentStats
+    by_sales_person: List[SalesPersonStats]
+    by_manager: List[ManagerStats]
+    # Cross-dimensional
+    revenue_by_role: dict         # role → total billed
+    top_customers_revenue: List[dict]
+    top_products_revenue: List[dict]
+
+
 # ─── Audit ───────────────────────────────────────────────────────────────────
 
 class AuditTrailOut(BaseModel):
