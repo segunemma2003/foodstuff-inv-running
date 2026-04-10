@@ -2,6 +2,7 @@ from typing import List, Optional
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -10,6 +11,10 @@ import models
 import schemas
 from utils import audit
 from utils.tasks import generate_invoice_pdf_task
+
+
+class InvoiceSendEmailRequest(BaseModel):
+    additional_emails: Optional[List[str]] = None
 
 router = APIRouter(prefix="/invoices", tags=["Invoices"])
 
@@ -142,6 +147,57 @@ def generate_invoice_pdf(
         message=f"PDF generation queued for {inv.invoice_number}. "
                 f"Poll /api/v1/jobs/{task.id} for status.",
     )
+
+
+@router.post("/{invoice_id}/send-email", response_model=schemas.MessageResponse)
+def send_invoice_email(
+    invoice_id: int,
+    body: InvoiceSendEmailRequest,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Send invoice PDF to the customer's email and/or additional email addresses."""
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+
+    emails: List[str] = []
+    if inv.customer and inv.customer.email:
+        emails.append(inv.customer.email)
+    if body.additional_emails:
+        emails.extend([e.strip() for e in body.additional_emails if e.strip()])
+
+    if not emails:
+        raise HTTPException(400, "No email addresses to send to")
+
+    from io import BytesIO
+    from utils.pdf_generator import generate_invoice_pdf as gen_pdf
+    from utils.email import send_email, tpl_invoice_to_customer
+
+    bank_accounts = (
+        db.query(models.PaymentAccount)
+        .filter(models.PaymentAccount.is_active == True)
+        .order_by(models.PaymentAccount.is_default.desc())
+        .all()
+    )
+    pdf_bytes = gen_pdf(inv, bank_accounts=bank_accounts)
+
+    customer_name = inv.customer.customer_name if inv.customer else "Customer"
+    for email in emails:
+        subject, html, text = tpl_invoice_to_customer(
+            invoice_number=inv.invoice_number,
+            customer_name=customer_name,
+            total=float(inv.total_amount),
+        )
+        send_email(
+            to=email,
+            subject=subject,
+            html=html,
+            text=text,
+            attachments=[(f"{inv.invoice_number}.pdf", pdf_bytes, "application/pdf")],
+        )
+
+    return schemas.MessageResponse(message=f"Invoice sent to {len(emails)} recipient(s)")
 
 
 @router.post("/{invoice_id}/cancel", response_model=schemas.InvoiceOut)

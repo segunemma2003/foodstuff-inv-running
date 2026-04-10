@@ -23,7 +23,21 @@ def list_customers(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Customer)
+    # Subquery: last active invoice date per customer
+    last_order_sq = (
+        db.query(
+            models.Invoice.customer_id.label("cid"),
+            func.max(models.Invoice.invoice_date).label("last_date"),
+        )
+        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .group_by(models.Invoice.customer_id)
+        .subquery()
+    )
+
+    q = (
+        db.query(models.Customer, last_order_sq.c.last_date)
+        .outerjoin(last_order_sq, models.Customer.id == last_order_sq.c.cid)
+    )
     if search:
         term = f"%{search}%"
         q = q.filter(
@@ -36,7 +50,15 @@ def list_customers(
         q = q.filter(models.Customer.category == category)
     if is_active is not None:
         q = q.filter(models.Customer.is_active == is_active)
-    return q.order_by(models.Customer.customer_name).offset(skip).limit(limit).all()
+
+    rows = q.order_by(models.Customer.customer_name).offset(skip).limit(limit).all()
+
+    results = []
+    for customer, last_date in rows:
+        data = schemas.CustomerOut.model_validate(customer).model_dump()
+        data["last_order_date"] = last_date
+        results.append(schemas.CustomerOut(**data))
+    return results
 
 
 @router.post("", response_model=schemas.CustomerOut, status_code=201)
@@ -125,16 +147,18 @@ def customer_quotations(
 def customer_invoices(
     customer_id: int,
     skip: int = 0,
-    limit: int = 20,
+    limit: int = 200,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    return (
-        db.query(models.Invoice)
-        .filter(models.Invoice.customer_id == customer_id)
-        .order_by(models.Invoice.created_at.desc())
-        .offset(skip).limit(limit).all()
-    )
+    q = db.query(models.Invoice).filter(models.Invoice.customer_id == customer_id)
+    if date_from:
+        q = q.filter(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        q = q.filter(models.Invoice.invoice_date <= date_to)
+    return q.order_by(models.Invoice.created_at.desc()).offset(skip).limit(limit).all()
 
 
 @router.get("/{customer_id}/analytics", response_model=schemas.CustomerDetailOut)
@@ -162,6 +186,12 @@ def customer_analytics(
         for inv in invoices
         for item in inv.items
     )
+    # Cost of sales = sum(cost_price * quantity) for all invoice items
+    cost_of_sales = sum(
+        float(item.cost_price) * float(item.quantity)
+        for inv in invoices
+        for item in inv.items
+    )
     num_orders = len(invoices)
     avg_order = total_value / num_orders if num_orders else 0
     last_order = max((inv.invoice_date for inv in invoices), default=None)
@@ -176,8 +206,9 @@ def customer_analytics(
     pref_pt = max(pt_counts, key=pt_counts.get) if pt_counts else None
     pref_dt = max(dt_counts, key=dt_counts.get) if dt_counts else None
 
+    base = schemas.CustomerOut.model_validate(c).model_dump()
     out = schemas.CustomerDetailOut(
-        **schemas.CustomerOut.model_validate(c).model_dump(),
+        **base,
         total_sales_value=total_value,
         total_quantity_bought=total_qty,
         total_orders=num_orders,
@@ -185,6 +216,7 @@ def customer_analytics(
         last_order_date=last_order,
         preferred_payment_term=pref_pt,
         preferred_delivery_type=pref_dt,
+        cost_of_sales=cost_of_sales,
     )
     return out
 
@@ -193,10 +225,12 @@ def customer_analytics(
 def customer_top_products(
     customer_id: int,
     limit: int = 10,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    rows = (
+    q = (
         db.query(
             models.Product.id,
             models.Product.product_name,
@@ -209,7 +243,13 @@ def customer_top_products(
             models.Invoice.customer_id == customer_id,
             models.Invoice.status == models.InvoiceStatus.active,
         )
-        .group_by(models.Product.id, models.Product.product_name)
+    )
+    if date_from:
+        q = q.filter(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        q = q.filter(models.Invoice.invoice_date <= date_to)
+    rows = (
+        q.group_by(models.Product.id, models.Product.product_name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
         .limit(limit)
         .all()

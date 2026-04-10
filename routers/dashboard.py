@@ -51,6 +51,24 @@ def overview(
     sales_week = _sales_in_range(db, week_start, today)
     sales_month = _sales_in_range(db, month_start, today)
 
+    # Cost of sales = sum(cost_price * quantity) for active invoices
+    cos_month = (
+        db.query(func.sum(models.InvoiceItem.cost_price * models.InvoiceItem.quantity))
+        .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
+        .filter(
+            models.Invoice.invoice_date >= month_start,
+            models.Invoice.invoice_date <= today,
+            models.Invoice.status == models.InvoiceStatus.active,
+        )
+        .scalar() or 0
+    )
+    cos_all = (
+        db.query(func.sum(models.InvoiceItem.cost_price * models.InvoiceItem.quantity))
+        .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
+        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .scalar() or 0
+    )
+
     active_customers = (
         db.query(func.count(models.Customer.id))
         .filter(models.Customer.is_active == True)
@@ -139,6 +157,8 @@ def overview(
         sales_this_month=sales_month,
         active_customers=active_customers,
         products_sold_today=float(products_sold_today),
+        cost_of_sales_this_month=float(cos_month),
+        cost_of_sales_all_time=float(cos_all),
         top_customers=[
             {"customer_id": r.id, "customer_name": r.customer_name, "total_sales": float(r.total)}
             for r in top_customers

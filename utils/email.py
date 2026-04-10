@@ -206,6 +206,42 @@ def tpl_quotation_to_customer(
     return subject, html, text
 
 
+def tpl_invoice_to_customer(
+    invoice_number: str,
+    customer_name: str,
+    total: float,
+    company_name: str = "Foodstuff Store",
+) -> tuple[str, str, str]:
+    """Invoice email sent to a customer with the PDF attached."""
+    subject = f"Invoice {invoice_number} from {company_name}"
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:560px">
+      <h2 style="color:#1a5276">Invoice from {company_name}</h2>
+      <p>Dear <b>{customer_name}</b>,</p>
+      <p>Please find attached your invoice <b>{invoice_number}</b>.</p>
+      <table style="border-collapse:collapse;width:100%;margin:16px 0">
+        <tr style="background:#f2f4f6">
+          <td style="padding:10px;font-weight:bold">Invoice Number</td>
+          <td style="padding:10px">{invoice_number}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px;font-weight:bold">Total Amount</td>
+          <td style="padding:10px;font-weight:bold">&#8358;{total:,.2f}</td>
+        </tr>
+      </table>
+      <p>Please review the attached PDF. If you have any questions, please contact us.</p>
+      <hr/>
+      <p style="font-size:12px;color:#888">{company_name}</p>
+    </div>"""
+    text = (
+        f"Dear {customer_name},\n\n"
+        f"Please find attached invoice {invoice_number} for \u20a6{total:,.2f}.\n\n"
+        f"If you have any questions, please contact us.\n\n"
+        f"{company_name}"
+    )
+    return subject, html, text
+
+
 def tpl_payment_link(
     customer_name: str,
     invoice_number: str,

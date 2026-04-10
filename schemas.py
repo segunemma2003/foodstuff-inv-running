@@ -140,6 +140,7 @@ class CustomerOut(BaseModel):
     default_payment_term: str
     is_active: bool
     created_at: datetime
+    last_order_date: Optional[date] = None
 
 
 class CustomerDetailOut(CustomerOut):
@@ -150,6 +151,7 @@ class CustomerDetailOut(CustomerOut):
     last_order_date: Optional[date] = None
     preferred_payment_term: Optional[str] = None
     preferred_delivery_type: Optional[str] = None
+    cost_of_sales: float = 0
 
 
 # ─── Products ────────────────────────────────────────────────────────────────
@@ -407,6 +409,8 @@ class DashboardOverview(BaseModel):
     sales_this_month: float
     active_customers: int
     products_sold_today: float
+    cost_of_sales_this_month: float = 0
+    cost_of_sales_all_time: float = 0
     top_customers: List[dict]
     top_products: List[dict]
     delivery_vs_pickup: dict
