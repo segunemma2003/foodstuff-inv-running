@@ -1,6 +1,8 @@
+from typing import Optional
 from datetime import date, timedelta, datetime
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract
 
@@ -150,6 +152,7 @@ def overview(
     )
 
     return schemas.DashboardOverview(
+
         quotations_today=quotations_today,
         invoices_today=invoices_today,
         sales_today=sales_today,
@@ -189,3 +192,208 @@ def overview(
             for q in recent_quotations
         ],
     )
+
+
+# ── Cost of Sales detail ──────────────────────────────────────────────────────
+
+class CostOfSalesEmailRequest(BaseModel):
+    to: str
+    date_from: Optional[date] = None
+    date_to:   Optional[date] = None
+
+
+@router.get("/cost-of-sales")
+def cost_of_sales_detail(
+    date_from: Optional[date] = None,
+    date_to:   Optional[date] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    item_q = (
+        db.query(
+            models.InvoiceItem.product_id,
+            models.Product.product_name,
+            func.sum(models.InvoiceItem.quantity).label("qty"),
+            func.sum(
+                models.InvoiceItem.cost_price * models.InvoiceItem.quantity
+            ).label("cost"),
+            func.sum(models.InvoiceItem.line_total).label("revenue"),
+        )
+        .join(models.Product, models.Product.id == models.InvoiceItem.product_id)
+        .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
+        .filter(models.Invoice.status == models.InvoiceStatus.active)
+    )
+    if date_from:
+        item_q = item_q.filter(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        item_q = item_q.filter(models.Invoice.invoice_date <= date_to)
+
+    product_rows = (
+        item_q
+        .group_by(models.InvoiceItem.product_id, models.Product.product_name)
+        .order_by(func.sum(
+            models.InvoiceItem.cost_price * models.InvoiceItem.quantity
+        ).desc())
+        .all()
+    )
+
+    inv_q = (
+        db.query(
+            models.Invoice.id,
+            models.Invoice.invoice_number,
+            models.Invoice.invoice_date,
+            models.Customer.customer_name,
+            func.sum(
+                models.InvoiceItem.cost_price * models.InvoiceItem.quantity
+            ).label("cost"),
+            func.sum(models.InvoiceItem.line_total).label("revenue"),
+        )
+        .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
+        .join(models.Customer, models.Customer.id == models.Invoice.customer_id)
+        .filter(models.Invoice.status == models.InvoiceStatus.active)
+    )
+    if date_from:
+        inv_q = inv_q.filter(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        inv_q = inv_q.filter(models.Invoice.invoice_date <= date_to)
+
+    invoice_rows = (
+        inv_q
+        .group_by(
+            models.Invoice.id, models.Invoice.invoice_number,
+            models.Invoice.invoice_date, models.Customer.customer_name,
+        )
+        .order_by(models.Invoice.invoice_date.desc())
+        .all()
+    )
+
+    total_cost    = sum(float(r.cost or 0)    for r in product_rows)
+    total_revenue = sum(float(r.revenue or 0) for r in product_rows)
+    gross_profit  = total_revenue - total_cost
+    gross_margin  = round(gross_profit / total_revenue * 100, 2) if total_revenue else 0
+
+    return {
+        "summary": {
+            "total_cost": total_cost,
+            "total_revenue": total_revenue,
+            "gross_profit": gross_profit,
+            "gross_margin_pct": gross_margin,
+        },
+        "by_product": [
+            {
+                "product_id": r.product_id,
+                "product_name": r.product_name,
+                "qty": float(r.qty),
+                "cost": float(r.cost or 0),
+                "revenue": float(r.revenue or 0),
+                "gross_profit": float(r.revenue or 0) - float(r.cost or 0),
+                "margin_pct": round(
+                    (float(r.revenue or 0) - float(r.cost or 0))
+                    / float(r.revenue) * 100, 2
+                ) if r.revenue else 0,
+            }
+            for r in product_rows
+        ],
+        "by_invoice": [
+            {
+                "invoice_id": r.id,
+                "invoice_number": r.invoice_number,
+                "invoice_date": str(r.invoice_date),
+                "customer_name": r.customer_name,
+                "cost": float(r.cost or 0),
+                "revenue": float(r.revenue or 0),
+                "gross_profit": float(r.revenue or 0) - float(r.cost or 0),
+                "margin_pct": round(
+                    (float(r.revenue or 0) - float(r.cost or 0))
+                    / float(r.revenue) * 100, 2
+                ) if r.revenue else 0,
+            }
+            for r in invoice_rows
+        ],
+    }
+
+
+@router.post("/cost-of-sales/email")
+def email_cost_of_sales_report(
+    body: CostOfSalesEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    from utils.tasks import send_email_task
+
+    data = cost_of_sales_detail(
+        date_from=body.date_from,
+        date_to=body.date_to,
+        db=db,
+        _=current_user,
+    )
+    s   = data["summary"]
+    rows_html = "".join(
+        f"<tr style='background:{'#f9f9f9' if i%2 else '#fff'}'>"
+        f"<td style='padding:6px 10px'>{r['product_name']}</td>"
+        f"<td style='padding:6px 10px;text-align:right'>{r['qty']:.0f}</td>"
+        f"<td style='padding:6px 10px;text-align:right'>&#8358;{r['cost']:,.2f}</td>"
+        f"<td style='padding:6px 10px;text-align:right'>&#8358;{r['revenue']:,.2f}</td>"
+        f"<td style='padding:6px 10px;text-align:right'>&#8358;{r['gross_profit']:,.2f}</td>"
+        f"<td style='padding:6px 10px;text-align:right'>{r['margin_pct']:.1f}%</td>"
+        f"</tr>"
+        for i, r in enumerate(data["by_product"])
+    )
+    date_label = ""
+    if body.date_from or body.date_to:
+        date_label = f" ({body.date_from or '—'} to {body.date_to or '—'})"
+
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:700px">
+      <h2 style="color:#1e8449">Cost of Sales Report{date_label}</h2>
+      <table style="border-collapse:collapse;width:100%;margin-bottom:24px">
+        <tr style="background:#eafaf1">
+          <td style="padding:10px;font-weight:bold">Total Cost</td>
+          <td style="padding:10px">&#8358;{s['total_cost']:,.2f}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px;font-weight:bold">Total Revenue</td>
+          <td style="padding:10px">&#8358;{s['total_revenue']:,.2f}</td>
+        </tr>
+        <tr style="background:#eafaf1">
+          <td style="padding:10px;font-weight:bold">Gross Profit</td>
+          <td style="padding:10px;color:#1e8449;font-weight:bold">&#8358;{s['gross_profit']:,.2f}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px;font-weight:bold">Gross Margin</td>
+          <td style="padding:10px">{s['gross_margin_pct']:.1f}%</td>
+        </tr>
+      </table>
+      <h3 style="color:#1e8449">Breakdown by Product</h3>
+      <table style="border-collapse:collapse;width:100%;font-size:13px">
+        <thead>
+          <tr style="background:#1e8449;color:#fff">
+            <th style="padding:8px 10px;text-align:left">Product</th>
+            <th style="padding:8px 10px;text-align:right">Qty</th>
+            <th style="padding:8px 10px;text-align:right">Cost</th>
+            <th style="padding:8px 10px;text-align:right">Revenue</th>
+            <th style="padding:8px 10px;text-align:right">Gross Profit</th>
+            <th style="padding:8px 10px;text-align:right">Margin</th>
+          </tr>
+        </thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+      <hr style="margin-top:24px"/>
+      <p style="font-size:12px;color:#888">
+        Sent by {current_user.full_name} — Foodstuff Store Internal System
+      </p>
+    </div>"""
+    text = (
+        f"Cost of Sales Report{date_label}\n\n"
+        f"Total Cost:    ₦{s['total_cost']:,.2f}\n"
+        f"Total Revenue: ₦{s['total_revenue']:,.2f}\n"
+        f"Gross Profit:  ₦{s['gross_profit']:,.2f}\n"
+        f"Gross Margin:  {s['gross_margin_pct']:.1f}%\n"
+    )
+    send_email_task.delay(
+        to=body.to,
+        subject=f"Cost of Sales Report{date_label} — Foodstuff Store",
+        html=html,
+        text=text,
+    )
+    return {"message": f"Report sent to {body.to}"}

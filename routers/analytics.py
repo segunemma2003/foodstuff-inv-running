@@ -1,5 +1,6 @@
 from typing import Optional, List
 from datetime import date, timedelta
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -13,12 +14,21 @@ import schemas
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 
-def _active_invoices(db: Session, date_from: Optional[date], date_to: Optional[date]):
-    q = db.query(models.Invoice).filter(models.Invoice.status == models.InvoiceStatus.active)
+def _inv_filters(q, date_from, date_to, delivery_type=None, payment_term=None,
+                 staff_id=None, customer_id=None):
+    q = q.filter(models.Invoice.status == models.InvoiceStatus.active)
     if date_from:
         q = q.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
         q = q.filter(models.Invoice.invoice_date <= date_to)
+    if delivery_type:
+        q = q.filter(models.Invoice.delivery_type == delivery_type)
+    if payment_term:
+        q = q.filter(models.Invoice.payment_term == payment_term)
+    if staff_id:
+        q = q.filter(models.Invoice.created_by == staff_id)
+    if customer_id:
+        q = q.filter(models.Invoice.customer_id == customer_id)
     return q
 
 
@@ -35,50 +45,41 @@ def sales_analytics(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    inv_q = db.query(models.Invoice).filter(models.Invoice.status == models.InvoiceStatus.active)
-    if date_from:
-        inv_q = inv_q.filter(models.Invoice.invoice_date >= date_from)
-    if date_to:
-        inv_q = inv_q.filter(models.Invoice.invoice_date <= date_to)
-    if customer_id:
-        inv_q = inv_q.filter(models.Invoice.customer_id == customer_id)
-    if delivery_type:
-        inv_q = inv_q.filter(models.Invoice.delivery_type == delivery_type)
-    if payment_term:
-        inv_q = inv_q.filter(models.Invoice.payment_term == payment_term)
-    if staff_id:
-        inv_q = inv_q.filter(models.Invoice.created_by == staff_id)
-
+    # ── Core invoice query ────────────────────────────────────────────────────
+    inv_q = _inv_filters(
+        db.query(models.Invoice), date_from, date_to,
+        delivery_type, payment_term, staff_id, customer_id,
+    )
     invoices = inv_q.all()
     total_value = sum(float(i.total_amount) for i in invoices)
-    total_inv = len(invoices)
+    total_inv   = len(invoices)
 
-    # Quotation count for conversion rate
     quot_q = db.query(func.count(models.Quotation.id))
     if date_from:
         quot_q = quot_q.filter(models.Quotation.quotation_date >= date_from)
     if date_to:
         quot_q = quot_q.filter(models.Quotation.quotation_date <= date_to)
-    total_quot = quot_q.scalar() or 0
+    total_quot   = quot_q.scalar() or 0
     conversion_rate = (total_inv / total_quot * 100) if total_quot else 0
-
     avg_inv = total_value / total_inv if total_inv else 0
 
-    # Top customers
-    top_cust = (
+    # ── Top customers (with same filters) ─────────────────────────────────────
+    tc_q = (
         db.query(
             models.Customer.id, models.Customer.customer_name,
             func.sum(models.Invoice.total_amount).label("total"),
         )
         .join(models.Invoice, models.Invoice.customer_id == models.Customer.id)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
-        .group_by(models.Customer.id, models.Customer.customer_name)
+    )
+    tc_q = _inv_filters(tc_q, date_from, date_to, delivery_type, payment_term, staff_id)
+    top_cust = (
+        tc_q.group_by(models.Customer.id, models.Customer.customer_name)
         .order_by(func.sum(models.Invoice.total_amount).desc())
         .limit(10).all()
     )
 
-    # Top products
-    top_prod = (
+    # ── Top products ──────────────────────────────────────────────────────────
+    tp_q = (
         db.query(
             models.Product.id, models.Product.product_name,
             func.sum(models.InvoiceItem.line_total).label("total"),
@@ -86,14 +87,20 @@ def sales_analytics(
         )
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
-        .group_by(models.Product.id, models.Product.product_name)
+    )
+    tp_q = _inv_filters(tp_q, date_from, date_to, delivery_type, payment_term, staff_id, customer_id)
+    if category_id:
+        tp_q = tp_q.filter(models.Product.category_id == category_id)
+    if product_id:
+        tp_q = tp_q.filter(models.Product.id == product_id)
+    top_prod = (
+        tp_q.group_by(models.Product.id, models.Product.product_name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
         .limit(10).all()
     )
 
-    # Top categories
-    top_cat = (
+    # ── Top categories ────────────────────────────────────────────────────────
+    tcat_q = (
         db.query(
             models.ProductCategory.id, models.ProductCategory.name,
             func.sum(models.InvoiceItem.line_total).label("total"),
@@ -101,40 +108,45 @@ def sales_analytics(
         .join(models.Product, models.Product.category_id == models.ProductCategory.id)
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
-        .group_by(models.ProductCategory.id, models.ProductCategory.name)
+    )
+    tcat_q = _inv_filters(tcat_q, date_from, date_to, delivery_type, payment_term, staff_id, customer_id)
+    top_cat = (
+        tcat_q.group_by(models.ProductCategory.id, models.ProductCategory.name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
         .limit(10).all()
     )
 
-    # Sales by delivery type
-    dt_rows = (
-        db.query(models.Invoice.delivery_type, func.sum(models.Invoice.total_amount).label("t"))
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
-        .group_by(models.Invoice.delivery_type).all()
+    # ── Sales by delivery type ────────────────────────────────────────────────
+    dt_q = db.query(
+        models.Invoice.delivery_type,
+        func.sum(models.Invoice.total_amount).label("t"),
     )
+    dt_q = _inv_filters(dt_q, date_from, date_to, None, payment_term, staff_id, customer_id)
+    dt_rows = dt_q.group_by(models.Invoice.delivery_type).all()
 
-    # Sales by payment term
-    pt_rows = (
-        db.query(models.Invoice.payment_term, func.sum(models.Invoice.total_amount).label("t"))
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
-        .group_by(models.Invoice.payment_term).all()
+    # ── Sales by payment term ─────────────────────────────────────────────────
+    pt_q = db.query(
+        models.Invoice.payment_term,
+        func.sum(models.Invoice.total_amount).label("t"),
     )
+    pt_q = _inv_filters(pt_q, date_from, date_to, delivery_type, None, staff_id, customer_id)
+    pt_rows = pt_q.group_by(models.Invoice.payment_term).all()
 
-    # Sales by staff
-    staff_rows = (
+    # ── Sales by staff ────────────────────────────────────────────────────────
+    st_q = (
         db.query(
             models.User.id, models.User.full_name,
             func.sum(models.Invoice.total_amount).label("total"),
             func.count(models.Invoice.id).label("count"),
         )
         .join(models.Invoice, models.Invoice.created_by == models.User.id)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
-        .group_by(models.User.id, models.User.full_name)
-        .all()
     )
+    st_q = _inv_filters(st_q, date_from, date_to, delivery_type, payment_term, None, customer_id)
+    staff_rows = st_q.group_by(models.User.id, models.User.full_name).all()
 
-    # Daily trend (last 30 days)
+    # ── Daily trend (last 30 days or within date range) ───────────────────────
+    daily_from = date_from or (date.today() - timedelta(days=30))
+    daily_to   = date_to   or date.today()
     daily = (
         db.query(
             models.Invoice.invoice_date,
@@ -143,26 +155,26 @@ def sales_analytics(
         )
         .filter(
             models.Invoice.status == models.InvoiceStatus.active,
-            models.Invoice.invoice_date >= date.today() - timedelta(days=30),
+            models.Invoice.invoice_date >= daily_from,
+            models.Invoice.invoice_date <= daily_to,
         )
         .group_by(models.Invoice.invoice_date)
         .order_by(models.Invoice.invoice_date)
         .all()
     )
 
-    # Monthly trend
-    monthly = (
-        db.query(
-            extract("year", models.Invoice.invoice_date).label("year"),
-            extract("month", models.Invoice.invoice_date).label("month"),
-            func.sum(models.Invoice.total_amount).label("total"),
-            func.count(models.Invoice.id).label("count"),
-        )
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
-        .group_by("year", "month")
-        .order_by("year", "month")
-        .all()
-    )
+    # ── Monthly trend ─────────────────────────────────────────────────────────
+    mon_q = db.query(
+        extract("year",  models.Invoice.invoice_date).label("year"),
+        extract("month", models.Invoice.invoice_date).label("month"),
+        func.sum(models.Invoice.total_amount).label("total"),
+        func.count(models.Invoice.id).label("count"),
+    ).filter(models.Invoice.status == models.InvoiceStatus.active)
+    if date_from:
+        mon_q = mon_q.filter(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        mon_q = mon_q.filter(models.Invoice.invoice_date <= date_to)
+    monthly = mon_q.group_by("year", "month").order_by("year", "month").all()
 
     return schemas.SalesAnalytics(
         total_sales_value=total_value,
@@ -195,7 +207,8 @@ def sales_analytics(
             for r in daily
         ],
         monthly_trend=[
-            {"year": int(r.year), "month": int(r.month), "total": float(r.total), "count": r.count}
+            {"year": int(r.year), "month": int(r.month),
+             "total": float(r.total), "count": r.count}
             for r in monthly
         ],
     )
@@ -205,88 +218,104 @@ def sales_analytics(
 def customer_behavior(
     customer_id: Optional[int] = None,
     inactive_days: int = 30,
+    limit: int = 200,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    cutoff = date.today() - timedelta(days=inactive_days)
-    last_month_start = date.today().replace(day=1) - timedelta(days=1)
-    last_month_start = last_month_start.replace(day=1)
-    this_month_start = date.today().replace(day=1)
+    cutoff          = date.today() - timedelta(days=inactive_days)
+    last_month_end  = date.today().replace(day=1) - timedelta(days=1)
+    last_month_start= last_month_end.replace(day=1)
+    this_month_start= date.today().replace(day=1)
 
     cust_q = db.query(models.Customer).filter(models.Customer.is_active == True)
     if customer_id:
         cust_q = cust_q.filter(models.Customer.id == customer_id)
-    customers = cust_q.all()
+    customers = cust_q.limit(limit).all()
+    if not customers:
+        return []
 
+    cust_ids = [c.id for c in customers]
+
+    # ── Batch: all active invoices for these customers (1 query) ─────────────
+    all_invoices = (
+        db.query(models.Invoice)
+        .filter(
+            models.Invoice.customer_id.in_(cust_ids),
+            models.Invoice.status == models.InvoiceStatus.active,
+        )
+        .all()
+    )
+    inv_by_cust: dict = defaultdict(list)
+    for inv in all_invoices:
+        inv_by_cust[inv.customer_id].append(inv)
+
+    # ── Batch: top products per customer (1 query, group in Python) ───────────
+    prod_rows = (
+        db.query(
+            models.Invoice.customer_id,
+            models.Product.id.label("product_id"),
+            models.Product.product_name,
+            func.sum(models.InvoiceItem.quantity).label("qty"),
+            func.sum(models.InvoiceItem.line_total).label("value"),
+        )
+        .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
+        .join(models.Product, models.Product.id == models.InvoiceItem.product_id)
+        .filter(
+            models.Invoice.customer_id.in_(cust_ids),
+            models.Invoice.status == models.InvoiceStatus.active,
+        )
+        .group_by(
+            models.Invoice.customer_id,
+            models.Product.id,
+            models.Product.product_name,
+        )
+        .all()
+    )
+    top_prod_by_cust: dict = defaultdict(list)
+    for r in prod_rows:
+        top_prod_by_cust[r.customer_id].append({
+            "product_id": r.product_id, "product_name": r.product_name,
+            "qty": float(r.qty), "value": float(r.value),
+        })
+    for cid in top_prod_by_cust:
+        top_prod_by_cust[cid].sort(key=lambda x: x["value"], reverse=True)
+        top_prod_by_cust[cid] = top_prod_by_cust[cid][:10]
+
+    # ── Build result list in Python ───────────────────────────────────────────
     results = []
     for c in customers:
-        invoices = (
-            db.query(models.Invoice)
-            .filter(
-                models.Invoice.customer_id == c.id,
-                models.Invoice.status == models.InvoiceStatus.active,
-            )
-            .order_by(models.Invoice.invoice_date)
-            .all()
-        )
+        invoices = inv_by_cust[c.id]
         if not invoices:
             continue
 
         total_value = sum(float(inv.total_amount) for inv in invoices)
-        dates = sorted(inv.invoice_date for inv in invoices)
-        last_date = dates[-1]
+        dates       = sorted(inv.invoice_date for inv in invoices)
+        last_date   = dates[-1]
         is_inactive = last_date < cutoff
 
-        # Purchase frequency (avg days between orders)
+        freq = None
         if len(dates) > 1:
             gaps = [(dates[i + 1] - dates[i]).days for i in range(len(dates) - 1)]
             freq = sum(gaps) / len(gaps)
-        else:
-            freq = None
 
-        # Month-over-month
         this_month_val = sum(
-            float(inv.total_amount)
-            for inv in invoices
+            float(inv.total_amount) for inv in invoices
             if inv.invoice_date >= this_month_start
         )
         last_month_val = sum(
-            float(inv.total_amount)
-            for inv in invoices
-            if last_month_start <= inv.invoice_date < this_month_start
+            float(inv.total_amount) for inv in invoices
+            if last_month_start <= inv.invoice_date <= last_month_end
         )
         mom_change = None
         if last_month_val:
-            mom_change = round((this_month_val - last_month_val) / last_month_val * 100, 2)
-
-        # Top products
-        top_p = (
-            db.query(
-                models.Product.id,
-                models.Product.product_name,
-                func.sum(models.InvoiceItem.quantity).label("qty"),
-                func.sum(models.InvoiceItem.line_total).label("value"),
+            mom_change = round(
+                (this_month_val - last_month_val) / last_month_val * 100, 2
             )
-            .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
-            .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-            .filter(
-                models.Invoice.customer_id == c.id,
-                models.Invoice.status == models.InvoiceStatus.active,
-            )
-            .group_by(models.Product.id, models.Product.product_name)
-            .order_by(func.sum(models.InvoiceItem.line_total).desc())
-            .limit(10)
-            .all()
-        )
 
         results.append(schemas.CustomerBehaviorOut(
             customer_id=c.id,
             customer_name=c.customer_name,
-            top_products=[
-                {"product_id": r.id, "product_name": r.product_name,
-                 "qty": float(r.qty), "value": float(r.value)}
-                for r in top_p
-            ],
+            top_products=top_prod_by_cust[c.id],
             purchase_frequency_days=freq,
             total_orders=len(invoices),
             total_value=total_value,
@@ -368,7 +397,8 @@ def staff_performance(
     results = []
     for u in users:
         q_filter = [models.Quotation.created_by == u.id]
-        i_filter = [models.Invoice.created_by == u.id, models.Invoice.status == models.InvoiceStatus.active]
+        i_filter = [models.Invoice.created_by == u.id,
+                    models.Invoice.status == models.InvoiceStatus.active]
         if date_from:
             q_filter.append(models.Quotation.quotation_date >= date_from)
             i_filter.append(models.Invoice.invoice_date >= date_from)
@@ -376,7 +406,9 @@ def staff_performance(
             q_filter.append(models.Quotation.quotation_date <= date_to)
             i_filter.append(models.Invoice.invoice_date <= date_to)
 
-        quot_count = db.query(func.count(models.Quotation.id)).filter(*q_filter).scalar() or 0
+        quot_count = (
+            db.query(func.count(models.Quotation.id)).filter(*q_filter).scalar() or 0
+        )
         inv_data = (
             db.query(
                 func.count(models.Invoice.id).label("cnt"),
@@ -385,8 +417,8 @@ def staff_performance(
             .filter(*i_filter)
             .first()
         )
-        inv_count = inv_data.cnt or 0
-        inv_total = float(inv_data.total or 0)
+        inv_count  = inv_data.cnt or 0
+        inv_total  = float(inv_data.total or 0)
         conversion = (inv_count / quot_count * 100) if quot_count else 0
 
         results.append(schemas.StaffPerformanceOut(
@@ -409,9 +441,6 @@ def comprehensive_stats(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    """All-in-one stats: quotation funnel, invoice breakdown, payment collection,
-    per-sales-person, per-manager."""
-
     # ── Quotation stats ────────────────────────────────────────────────────────
     q_base = db.query(models.Quotation)
     if date_from:
@@ -442,7 +471,9 @@ def comprehensive_stats(
     submitted   = q_pending + q_approved + q_rejected + q_converted
     approval_r  = round((q_approved + q_converted) / submitted * 100, 2) if submitted else 0
     rejection_r = round(q_rejected / submitted * 100, 2) if submitted else 0
-    conv_r      = round(q_converted / (q_approved + q_converted) * 100, 2) if (q_approved + q_converted) else 0
+    conv_r      = round(
+        q_converted / (q_approved + q_converted) * 100, 2
+    ) if (q_approved + q_converted) else 0
 
     quot_stats = schemas.QuotationStats(
         total=q_total, draft=q_draft, pending_approval=q_pending,
@@ -476,18 +507,18 @@ def comprehensive_stats(
             "collected": float(r.collected or 0),
         }
 
-    i_total       = sum(v["cnt"] for v in imap.values())
-    i_active      = imap.get("active", {}).get("cnt", 0)
-    i_partial     = imap.get("partially_paid", {}).get("cnt", 0)
-    i_paid        = imap.get("paid", {}).get("cnt", 0)
-    i_cancelled   = imap.get("cancelled", {}).get("cnt", 0)
-    non_cancelled = i_total - i_cancelled
-    paid_rate_v   = round(i_paid / non_cancelled * 100, 2) if non_cancelled else 0
-    cancel_rate_v = round(i_cancelled / i_total * 100, 2) if i_total else 0
-    total_billed  = sum(v["billed"] for k, v in imap.items() if k != "cancelled")
-    total_coll    = sum(v["collected"] for k, v in imap.items() if k != "cancelled")
-    total_out     = total_billed - total_coll
-    coll_rate     = round(total_coll / total_billed * 100, 2) if total_billed else 0
+    i_total     = sum(v["cnt"] for v in imap.values())
+    i_active    = imap.get("active", {}).get("cnt", 0)
+    i_partial   = imap.get("partially_paid", {}).get("cnt", 0)
+    i_paid      = imap.get("paid", {}).get("cnt", 0)
+    i_cancelled = imap.get("cancelled", {}).get("cnt", 0)
+    non_cancelled= i_total - i_cancelled
+    paid_rate_v = round(i_paid / non_cancelled * 100, 2) if non_cancelled else 0
+    cancel_rate_v= round(i_cancelled / i_total * 100, 2) if i_total else 0
+    total_billed = sum(v["billed"]    for k, v in imap.items() if k != "cancelled")
+    total_coll   = sum(v["collected"] for k, v in imap.items() if k != "cancelled")
+    total_out    = total_billed - total_coll
+    coll_rate    = round(total_coll / total_billed * 100, 2) if total_billed else 0
 
     inv_stats = schemas.InvoiceStats(
         total=i_total, active=i_active, partially_paid=i_partial,
@@ -507,7 +538,10 @@ def comprehensive_stats(
         .group_by(models.Payment.status)
         .all()
     )
-    pmap: dict = {r.status.value: {"cnt": r.cnt, "total": float(r.total or 0)} for r in pay_rows}
+    pmap: dict = {
+        r.status.value: {"cnt": r.cnt, "total": float(r.total or 0)}
+        for r in pay_rows
+    }
     pay_stats = schemas.PaymentStats(
         total=sum(v["cnt"] for v in pmap.values()),
         pending=pmap.get("pending", {}).get("cnt", 0),
@@ -519,74 +553,83 @@ def comprehensive_stats(
         pending_amount=pmap.get("pending", {}).get("total", 0),
     )
 
-    # ── Per-sales-person stats ─────────────────────────────────────────────────
+    # ── Per-sales-person stats (2 batch queries instead of N*2) ───────────────
     all_users = db.query(models.User).filter(models.User.is_active == True).all()
+    user_map  = {u.id: u for u in all_users}
+
+    uq_base = db.query(
+        models.Quotation.created_by,
+        models.Quotation.status,
+        func.count(models.Quotation.id).label("cnt"),
+    )
+    if date_from:
+        uq_base = uq_base.filter(models.Quotation.quotation_date >= date_from)
+    if date_to:
+        uq_base = uq_base.filter(models.Quotation.quotation_date <= date_to)
+    uq_all = uq_base.group_by(
+        models.Quotation.created_by, models.Quotation.status
+    ).all()
+
+    ui_base = db.query(
+        models.Invoice.created_by,
+        models.Invoice.status,
+        func.count(models.Invoice.id).label("cnt"),
+        func.sum(models.Invoice.total_amount).label("billed"),
+        func.sum(models.Invoice.amount_paid).label("collected"),
+    )
+    if date_from:
+        ui_base = ui_base.filter(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        ui_base = ui_base.filter(models.Invoice.invoice_date <= date_to)
+    ui_all = ui_base.group_by(
+        models.Invoice.created_by, models.Invoice.status
+    ).all()
+
+    uqm: dict = defaultdict(dict)
+    for r in uq_all:
+        uqm[r.created_by][r.status.value] = r.cnt
+
+    uim: dict = defaultdict(dict)
+    for r in ui_all:
+        uim[r.created_by][r.status.value] = {
+            "cnt": r.cnt,
+            "billed": float(r.billed or 0),
+            "collected": float(r.collected or 0),
+        }
+
     by_sales: list = []
     for u in all_users:
-        # Quotations
-        uq_base = db.query(models.Quotation).filter(models.Quotation.created_by == u.id)
-        if date_from:
-            uq_base = uq_base.filter(models.Quotation.quotation_date >= date_from)
-        if date_to:
-            uq_base = uq_base.filter(models.Quotation.quotation_date <= date_to)
-        uq_rows = (
-            uq_base.with_entities(
-                models.Quotation.status,
-                func.count(models.Quotation.id).label("cnt"),
-            )
-            .group_by(models.Quotation.status)
-            .all()
-        )
-        uqm: dict = {r.status.value: r.cnt for r in uq_rows}
-        uq_total   = sum(uqm.values())
-        uq_draft   = uqm.get("draft", 0)
-        uq_pending = uqm.get("pending_approval", 0)
-        uq_appr    = uqm.get("approved", 0)
-        uq_rej     = uqm.get("rejected", 0)
-        uq_conv    = uqm.get("converted", 0)
+        uqmap = uqm[u.id]
+        uimap = uim[u.id]
+        uq_total   = sum(uqmap.values())
+        uq_draft   = uqmap.get("draft", 0)
+        uq_pending = uqmap.get("pending_approval", 0)
+        uq_appr    = uqmap.get("approved", 0)
+        uq_rej     = uqmap.get("rejected", 0)
+        uq_conv    = uqmap.get("converted", 0)
         uq_sub     = uq_pending + uq_appr + uq_rej + uq_conv
         uq_appr_r  = round((uq_appr + uq_conv) / uq_sub * 100, 2) if uq_sub else 0
-        uq_conv_r  = round(uq_conv / (uq_appr + uq_conv) * 100, 2) if (uq_appr + uq_conv) else 0
+        uq_conv_r  = round(
+            uq_conv / (uq_appr + uq_conv) * 100, 2
+        ) if (uq_appr + uq_conv) else 0
 
-        # Invoices
-        ui_base = db.query(models.Invoice).filter(models.Invoice.created_by == u.id)
-        if date_from:
-            ui_base = ui_base.filter(models.Invoice.invoice_date >= date_from)
-        if date_to:
-            ui_base = ui_base.filter(models.Invoice.invoice_date <= date_to)
-        ui_rows = (
-            ui_base.with_entities(
-                models.Invoice.status,
-                func.count(models.Invoice.id).label("cnt"),
-                func.sum(models.Invoice.total_amount).label("billed"),
-                func.sum(models.Invoice.amount_paid).label("collected"),
-            )
-            .group_by(models.Invoice.status)
-            .all()
-        )
-        uim: dict = {}
-        for r in ui_rows:
-            uim[r.status.value] = {
-                "cnt": r.cnt,
-                "billed": float(r.billed or 0),
-                "collected": float(r.collected or 0),
-            }
-        ui_total    = sum(v["cnt"] for v in uim.values())
-        ui_paid     = uim.get("paid", {}).get("cnt", 0)
-        ui_partial  = uim.get("partially_paid", {}).get("cnt", 0)
-        ui_active   = uim.get("active", {}).get("cnt", 0)
-        ui_cancel   = uim.get("cancelled", {}).get("cnt", 0)
-        ui_billed   = sum(v["billed"] for k, v in uim.items() if k != "cancelled")
-        ui_coll     = sum(v["collected"] for k, v in uim.items() if k != "cancelled")
-        ui_out      = ui_billed - ui_coll
-        ui_coll_r   = round(ui_coll / ui_billed * 100, 2) if ui_billed else 0
-        ui_avg      = ui_billed / (ui_total - ui_cancel) if (ui_total - ui_cancel) else 0
+        ui_total   = sum(v["cnt"] for v in uimap.values())
+        ui_paid    = uimap.get("paid", {}).get("cnt", 0)
+        ui_partial = uimap.get("partially_paid", {}).get("cnt", 0)
+        ui_active  = uimap.get("active", {}).get("cnt", 0)
+        ui_cancel  = uimap.get("cancelled", {}).get("cnt", 0)
+        ui_billed  = sum(v["billed"]    for k, v in uimap.items() if k != "cancelled")
+        ui_coll    = sum(v["collected"] for k, v in uimap.items() if k != "cancelled")
+        ui_out     = ui_billed - ui_coll
+        ui_coll_r  = round(ui_coll / ui_billed * 100, 2) if ui_billed else 0
+        ui_avg     = ui_billed / (ui_total - ui_cancel) if (ui_total - ui_cancel) else 0
 
         if uq_total == 0 and ui_total == 0:
-            continue  # Skip users with no activity
+            continue
 
         by_sales.append(schemas.SalesPersonStats(
-            user_id=u.id, full_name=u.full_name, username=u.username, role=u.role.value,
+            user_id=u.id, full_name=u.full_name, username=u.username,
+            role=u.role.value,
             quotations_total=uq_total, quotations_draft=uq_draft,
             quotations_pending=uq_pending, quotations_approved=uq_appr,
             quotations_rejected=uq_rej, quotations_converted=uq_conv,
@@ -598,10 +641,9 @@ def comprehensive_stats(
             total_outstanding=ui_out, collection_rate=ui_coll_r,
             avg_invoice_value=round(ui_avg, 2),
         ))
-
     by_sales.sort(key=lambda x: x.total_billed, reverse=True)
 
-    # ── Per-manager stats (users who approve quotations) ───────────────────────
+    # ── Per-manager stats ──────────────────────────────────────────────────────
     manager_rows = (
         db.query(
             models.User.id, models.User.full_name, models.User.username,
@@ -615,74 +657,87 @@ def comprehensive_stats(
             models.QuotationStatus.rejected,
             models.QuotationStatus.converted,
         ]))
-        .group_by(models.User.id, models.User.full_name, models.User.username, models.Quotation.status)
+        .group_by(
+            models.User.id, models.User.full_name,
+            models.User.username, models.Quotation.status,
+        )
         .all()
     )
 
     mgr_map: dict = {}
     for r in manager_rows:
         if r.id not in mgr_map:
-            mgr_map[r.id] = {"full_name": r.full_name, "username": r.username, "statuses": {}}
-        mgr_map[r.id]["statuses"][r.status.value] = {"cnt": r.cnt, "val": float(r.val or 0)}
+            mgr_map[r.id] = {
+                "full_name": r.full_name, "username": r.username, "statuses": {}
+            }
+        mgr_map[r.id]["statuses"][r.status.value] = {
+            "cnt": r.cnt, "val": float(r.val or 0)
+        }
+
+    # Top sales people per manager (batch: one query for all managers)
+    top_sales_rows = (
+        db.query(
+            models.Quotation.approved_by,
+            models.User.full_name,
+            func.count(models.Quotation.id).label("cnt"),
+            func.sum(models.Quotation.total_amount).label("val"),
+        )
+        .join(models.User, models.User.id == models.Quotation.created_by)
+        .filter(
+            models.Quotation.approved_by.in_(list(mgr_map.keys())),
+            models.Quotation.status.in_([
+                models.QuotationStatus.approved,
+                models.QuotationStatus.converted,
+            ]),
+        )
+        .group_by(models.Quotation.approved_by, models.User.id, models.User.full_name)
+        .order_by(func.sum(models.Quotation.total_amount).desc())
+        .all()
+    )
+    top_sales_by_mgr: dict = defaultdict(list)
+    for r in top_sales_rows:
+        top_sales_by_mgr[r.approved_by].append(
+            {"name": r.full_name, "count": r.cnt, "value": float(r.val)}
+        )
 
     by_manager: list = []
     for uid, m in mgr_map.items():
         s = m["statuses"]
-        approved_cnt  = s.get("approved", {}).get("cnt", 0) + s.get("converted", {}).get("cnt", 0)
-        rejected_cnt  = s.get("rejected", {}).get("cnt", 0)
-        reviewed      = approved_cnt + rejected_cnt
-        appr_r        = round(approved_cnt / reviewed * 100, 2) if reviewed else 0
-        rej_r         = round(rejected_cnt / reviewed * 100, 2) if reviewed else 0
-        rev_approved  = sum(v["val"] for k, v in s.items() if k in ("approved", "converted"))
-
-        # Top sales people whose quotations this manager approved
-        top_sales_rows = (
-            db.query(
-                models.User.full_name,
-                func.count(models.Quotation.id).label("cnt"),
-                func.sum(models.Quotation.total_amount).label("val"),
-            )
-            .join(models.Quotation, models.Quotation.created_by == models.User.id)
-            .filter(
-                models.Quotation.approved_by == uid,
-                models.Quotation.status.in_([
-                    models.QuotationStatus.approved,
-                    models.QuotationStatus.converted,
-                ]),
-            )
-            .group_by(models.User.id, models.User.full_name)
-            .order_by(func.sum(models.Quotation.total_amount).desc())
-            .limit(5)
-            .all()
-        )
+        approved_cnt = s.get("approved", {}).get("cnt", 0) + s.get("converted", {}).get("cnt", 0)
+        rejected_cnt = s.get("rejected", {}).get("cnt", 0)
+        reviewed     = approved_cnt + rejected_cnt
+        appr_r       = round(approved_cnt / reviewed * 100, 2) if reviewed else 0
+        rej_r        = round(rejected_cnt / reviewed * 100, 2) if reviewed else 0
+        rev_approved = sum(v["val"] for k, v in s.items() if k in ("approved", "converted"))
 
         by_manager.append(schemas.ManagerStats(
             user_id=uid, full_name=m["full_name"], username=m["username"],
-            reviewed_total=reviewed, approved_count=approved_cnt, rejected_count=rejected_cnt,
-            approval_rate=appr_r, rejection_rate=rej_r, revenue_approved=rev_approved,
-            top_sales=[{"name": r.full_name, "count": r.cnt, "value": float(r.val)} for r in top_sales_rows],
+            reviewed_total=reviewed, approved_count=approved_cnt,
+            rejected_count=rejected_cnt,
+            approval_rate=appr_r, rejection_rate=rej_r,
+            revenue_approved=rev_approved,
+            top_sales=top_sales_by_mgr[uid][:5],
         ))
     by_manager.sort(key=lambda x: x.revenue_approved, reverse=True)
 
     # ── Revenue by role ────────────────────────────────────────────────────────
-    role_rows = (
+    role_q = (
         db.query(
             models.User.role,
             func.sum(models.Invoice.total_amount).label("total"),
         )
         .join(models.Invoice, models.Invoice.created_by == models.User.id)
-        .filter(models.Invoice.status.in_([
-            models.InvoiceStatus.active,
-            models.InvoiceStatus.partially_paid,
-            models.InvoiceStatus.paid,
-        ]))
-        .group_by(models.User.role)
-        .all()
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     )
+    if date_from:
+        role_q = role_q.filter(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        role_q = role_q.filter(models.Invoice.invoice_date <= date_to)
+    role_rows = role_q.group_by(models.User.role).all()
     revenue_by_role = {r.role.value: float(r.total or 0) for r in role_rows}
 
-    # ── Top customers + products (all-time) ────────────────────────────────────
-    top_cust_rows = (
+    # ── Top customers + products (all-time or filtered) ────────────────────────
+    tc_q = (
         db.query(
             models.Customer.id, models.Customer.customer_name,
             func.count(func.distinct(models.Invoice.id)).label("orders"),
@@ -691,12 +746,18 @@ def comprehensive_stats(
         )
         .join(models.Invoice, models.Invoice.customer_id == models.Customer.id)
         .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
-        .group_by(models.Customer.id, models.Customer.customer_name)
-        .order_by(func.sum(models.Invoice.total_amount).desc())
-        .limit(20)
-        .all()
     )
-    top_prod_rows = (
+    if date_from:
+        tc_q = tc_q.filter(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        tc_q = tc_q.filter(models.Invoice.invoice_date <= date_to)
+    top_cust_rows = (
+        tc_q.group_by(models.Customer.id, models.Customer.customer_name)
+        .order_by(func.sum(models.Invoice.total_amount).desc())
+        .limit(20).all()
+    )
+
+    tprod_q = (
         db.query(
             models.Product.id, models.Product.product_name,
             func.sum(models.InvoiceItem.quantity).label("qty"),
@@ -706,10 +767,15 @@ def comprehensive_stats(
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
         .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
-        .group_by(models.Product.id, models.Product.product_name)
+    )
+    if date_from:
+        tprod_q = tprod_q.filter(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        tprod_q = tprod_q.filter(models.Invoice.invoice_date <= date_to)
+    top_prod_rows = (
+        tprod_q.group_by(models.Product.id, models.Product.product_name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
-        .limit(20)
-        .all()
+        .limit(20).all()
     )
 
     return schemas.ComprehensiveStats(
@@ -725,7 +791,9 @@ def comprehensive_stats(
                 "orders": r.orders, "billed": float(r.billed),
                 "collected": float(r.collected),
                 "outstanding": float(r.billed) - float(r.collected),
-                "collection_rate": round(float(r.collected) / float(r.billed) * 100, 1) if r.billed else 0,
+                "collection_rate": round(
+                    float(r.collected) / float(r.billed) * 100, 1
+                ) if r.billed else 0,
             }
             for r in top_cust_rows
         ],
