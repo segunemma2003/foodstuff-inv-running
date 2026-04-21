@@ -206,6 +206,84 @@ def list_invoices(
     return q.order_by(models.Invoice.created_at.desc()).offset(skip).limit(limit).all()
 
 
+@router.post("", response_model=schemas.InvoiceOut, status_code=201)
+def create_invoice(
+    body: schemas.InvoiceCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_not_analyst),
+):
+    """Create an invoice directly (without a quotation)."""
+    from utils.number_gen import next_invoice_number
+
+    customer = db.query(models.Customer).filter(models.Customer.id == body.customer_id).first()
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    if not body.items:
+        raise HTTPException(400, "At least one line item is required")
+
+    try:
+        delivery_type = models.DeliveryType(body.delivery_type)
+    except ValueError:
+        raise HTTPException(400, f"Invalid delivery_type '{body.delivery_type}'")
+
+    line_items = []
+    total_amount = 0.0
+
+    for item in body.items:
+        product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
+        if not product:
+            raise HTTPException(404, f"Product {item.product_id} not found")
+
+        latest_cost = (
+            db.query(models.CostPrice)
+            .filter(models.CostPrice.product_id == product.id)
+            .order_by(models.CostPrice.effective_date.desc())
+            .first()
+        )
+        cost_price = float(latest_cost.cost_price) if latest_cost else 0.0
+        unit_price = float(item.unit_price)
+        quantity   = float(item.quantity)
+        line_total = unit_price * quantity
+        total_amount += line_total
+
+        line_items.append(models.InvoiceItem(
+            product_id=product.id,
+            quantity=quantity,
+            uom=item.uom or product.unit_of_measure,
+            cost_price=cost_price,
+            supply_markup_pct=0,
+            supply_markup_amount=0,
+            delivery_markup_pct=0,
+            delivery_markup_amount=0,
+            payment_term_markup_pct=0,
+            payment_term_markup_amount=0,
+            unit_price=unit_price,
+            line_total=line_total,
+        ))
+
+    inv = models.Invoice(
+        invoice_number=next_invoice_number(db),
+        quotation_id=None,
+        customer_id=customer.id,
+        invoice_date=body.invoice_date,
+        due_date=body.due_date,
+        payment_term=body.payment_term,
+        delivery_type=delivery_type,
+        notes=body.notes,
+        total_amount=total_amount,
+        amount_paid=0,
+        created_by=current_user.id,
+        items=line_items,
+    )
+    db.add(inv)
+    db.commit()
+    db.refresh(inv)
+    audit.log(db, models.AuditAction.create, models.AuditEntity.invoice, inv.id,
+              current_user.id, description=f"Created invoice {inv.invoice_number} directly")
+    return inv
+
+
 @router.get("/{invoice_id}", response_model=schemas.InvoiceOut)
 def get_invoice(
     invoice_id: int,

@@ -354,6 +354,23 @@ class QuotationOut(BaseModel):
 
 # ─── Invoices ────────────────────────────────────────────────────────────────
 
+class InvoiceItemCreate(BaseModel):
+    product_id: int
+    quantity: Decimal
+    uom: Optional[str] = None
+    unit_price: Decimal  # selling price (user-provided or from calculate-price)
+
+
+class InvoiceCreate(BaseModel):
+    customer_id: int
+    invoice_date: date
+    due_date: Optional[date] = None
+    payment_term: str = "cash"
+    delivery_type: str = "pickup"
+    notes: Optional[str] = None
+    items: List[InvoiceItemCreate]
+
+
 class InvoiceItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -379,7 +396,7 @@ class InvoiceOut(BaseModel):
 
     id: int
     invoice_number: str
-    quotation_id: int
+    quotation_id: Optional[int] = None
     customer_id: int
     customer: Optional[CustomerOut] = None
     customer_name: Optional[str] = None      # flat from model property
