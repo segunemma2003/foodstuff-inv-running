@@ -105,9 +105,9 @@ def run_migrations():
             conn.execute(text(
                 "ALTER TABLE invoices ALTER COLUMN quotation_id DROP NOT NULL"
             ))
-        else:
-            # SQLite: recreate is complex — skip (dev only, column already nullable after model change)
-            pass
+            conn.execute(text(
+                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS custom_pdf_s3_key VARCHAR(255)"
+            ))
         conn.commit()
 
 

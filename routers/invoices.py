@@ -39,6 +39,141 @@ def list_convertible_quotations(
     return q.order_by(models.Quotation.approved_at.desc()).all()
 
 
+@router.get("/template")
+def download_invoice_template():
+    """Return a formatted Excel template for invoice import."""
+    from io import BytesIO
+    from datetime import date
+    from fastapi.responses import StreamingResponse
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Invoice Import"
+
+    headers = [
+        ("invoice_number", 20),
+        ("customer_name",  28),
+        ("invoice_date",   16),
+        ("due_date",       16),
+        ("payment_term",   18),
+        ("delivery_type",  16),
+        ("product_name",   30),
+        ("qty",            10),
+        ("unit_price",     14),
+        ("notes",          30),
+    ]
+
+    green_fill  = PatternFill("solid", fgColor="1E8449")
+    alt_fill    = PatternFill("solid", fgColor="EAF4EE")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    body_font   = Font(size=10)
+    thin_side   = Side(style="thin", color="CCCCCC")
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+
+    # Header row
+    for col, (name, width) in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=name)
+        cell.font      = header_font
+        cell.fill      = green_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border    = thin_border
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.row_dimensions[1].height = 22
+
+    # Sample data — two invoices, first has 2 line items
+    today = date.today()
+    sample = [
+        # invoice_number  customer_name   inv_date         due_date          pay_term    delivery   product_name    qty   price    notes
+        ("INV-2026-0001", "GENESIS GROUP", date(2026,1,15), date(2026,2,14),  "net_30",   "delivery","Rice 50kg",    10,   85000,  ""),
+        ("INV-2026-0001", "GENESIS GROUP", date(2026,1,15), date(2026,2,14),  "net_30",   "delivery","Beans 50kg",    5,   45000,  ""),
+        ("",              "ACME Corp",     date(2026,1,16), "",               "cash",     "pickup",  "Rice 50kg",     2,   85000,  "Urgent order"),
+    ]
+
+    date_fmt = "YYYY-MM-DD"
+    for r, row in enumerate(sample, 2):
+        fill = alt_fill if r % 2 == 0 else None
+        for c, val in enumerate(row, 1):
+            cell = ws.cell(row=r, column=c, value=val)
+            cell.font   = body_font
+            cell.border = thin_border
+            if fill:
+                cell.fill = fill
+            if isinstance(val, date):
+                cell.number_format = date_fmt
+                cell.alignment = Alignment(horizontal="center")
+            elif c in (8, 9):  # qty, unit_price
+                cell.alignment = Alignment(horizontal="right")
+                if c == 9:
+                    cell.number_format = "#,##0"
+
+    ws.freeze_panes = "A2"  # freeze header row
+
+    # Notes sheet
+    ns = wb.create_sheet("How to Fill")
+    ns.column_dimensions["A"].width = 18
+    ns.column_dimensions["B"].width = 85
+    ns["A1"] = "Column"
+    ns["B1"] = "Instructions"
+    ns["A1"].font = Font(bold=True, color="FFFFFF")
+    ns["B1"].font = Font(bold=True, color="FFFFFF")
+    ns["A1"].fill = green_fill
+    ns["B1"].fill = green_fill
+
+    instructions = [
+        ("invoice_number", "Optional. Leave blank to auto-generate. Use the SAME value on multiple rows to group them into one invoice."),
+        ("customer_name",  "REQUIRED. Must match a customer name in the system exactly (case-insensitive)."),
+        ("invoice_date",   "REQUIRED. Date format: YYYY-MM-DD  (e.g. 2026-01-15)"),
+        ("due_date",       "Optional. Date format: YYYY-MM-DD"),
+        ("payment_term",   "Optional. Allowed values: cash  immediate  net_7  net_14  net_30  net_45  net_60  net_90.  Default: cash"),
+        ("delivery_type",  "Optional. Allowed values: delivery  pickup.  Default: pickup"),
+        ("product_name",   "REQUIRED. Must match a product name in the system exactly (case-insensitive)."),
+        ("qty",            "REQUIRED. Quantity sold. Must be greater than 0."),
+        ("unit_price",     "REQUIRED. Selling price per unit — numbers only, no currency symbol (e.g. 85000)."),
+        ("notes",          "Optional. Any internal note for this invoice."),
+    ]
+    for i, (col, desc) in enumerate(instructions, 2):
+        a = ns.cell(row=i, column=1, value=col)
+        b = ns.cell(row=i, column=2, value=desc)
+        a.font = Font(bold=True, size=10)
+        b.font = Font(size=10)
+        if i % 2 == 0:
+            a.fill = alt_fill
+            b.fill = alt_fill
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="invoice_import_template.xlsx"'},
+    )
+
+
+@router.post("/bulk-upload", response_model=schemas.JobEnqueuedResponse, status_code=202)
+async def bulk_upload_invoices(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(require_not_analyst),
+):
+    """Upload an Excel file to import invoices. Returns a task_id — poll /api/v1/jobs/{task_id}."""
+    import uuid
+    from utils.s3 import upload_bytes
+    from utils.tasks import process_invoice_bulk_task
+
+    content = await file.read()
+    s3_key = f"uploads/invoices_{uuid.uuid4()}.xlsx"
+    upload_bytes(s3_key, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    task = process_invoice_bulk_task.delay(s3_key, current_user.id)
+    return schemas.JobEnqueuedResponse(
+        task_id=task.id,
+        message=f"Invoice import queued. Poll /api/v1/jobs/{task.id} for result.",
+    )
+
+
 @router.get("", response_model=List[schemas.InvoiceOut])
 def list_invoices(
     skip: int = 0,
@@ -89,14 +224,25 @@ def download_invoice_pdf(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    """Stream invoice PDF directly (synchronous — no polling needed)."""
+    """Stream invoice PDF. Serves uploaded PDF if present, otherwise generates from template."""
     from io import BytesIO
     from fastapi.responses import StreamingResponse
-    from utils.pdf_generator import generate_invoice_pdf as gen_pdf
 
     inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(404, "Invoice not found")
+
+    # Serve the uploaded PDF if one exists
+    if inv.custom_pdf_s3_key:
+        from utils.s3 import download_bytes
+        pdf_bytes = download_bytes(inv.custom_pdf_s3_key)
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{inv.invoice_number}.pdf"'},
+        )
+
+    from utils.pdf_generator import generate_invoice_pdf as gen_pdf
 
     bank_accounts = (
         db.query(models.PaymentAccount)
@@ -104,8 +250,6 @@ def download_invoice_pdf(
         .order_by(models.PaymentAccount.is_default.desc())
         .all()
     )
-
-    # Find the most recent pending Paystack payment URL for this invoice
     paystack_payment = (
         db.query(models.Payment)
         .filter(
@@ -117,13 +261,65 @@ def download_invoice_pdf(
         .first()
     )
     paystack_url = paystack_payment.paystack_payment_url if paystack_payment else None
-
     pdf_bytes = gen_pdf(inv, bank_accounts=bank_accounts, paystack_url=paystack_url)
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{inv.invoice_number}.pdf"'},
     )
+
+
+@router.post("/{invoice_id}/upload-pdf", response_model=schemas.InvoiceOut)
+async def upload_invoice_pdf(
+    invoice_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Upload a custom PDF for this invoice. Replaces any previously uploaded PDF."""
+    import uuid
+    from utils.s3 import upload_bytes, delete_object
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files are accepted")
+
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+
+    # Delete the old custom PDF from S3 if it exists
+    if inv.custom_pdf_s3_key:
+        delete_object(inv.custom_pdf_s3_key)
+
+    content = await file.read()
+    s3_key = f"invoices/{invoice_id}/custom_{uuid.uuid4()}.pdf"
+    upload_bytes(s3_key, content, "application/pdf")
+
+    inv.custom_pdf_s3_key = s3_key
+    db.commit()
+    db.refresh(inv)
+    return inv
+
+
+@router.delete("/{invoice_id}/upload-pdf", response_model=schemas.InvoiceOut)
+def remove_invoice_pdf(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Remove the uploaded PDF so the system-generated one is used again."""
+    from utils.s3 import delete_object
+
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+
+    if inv.custom_pdf_s3_key:
+        delete_object(inv.custom_pdf_s3_key)
+        inv.custom_pdf_s3_key = None
+        db.commit()
+        db.refresh(inv)
+    return inv
 
 
 @router.post("/{invoice_id}/generate-pdf", response_model=schemas.JobEnqueuedResponse,
@@ -219,91 +415,3 @@ def cancel_invoice(
     return inv
 
 
-@router.get("/template")
-def download_invoice_template():
-    """Return a sample Excel file showing the required import format."""
-    from io import BytesIO
-    from fastapi.responses import StreamingResponse
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Invoices"
-
-    headers = [
-        "invoice_number", "customer_name", "invoice_date", "due_date",
-        "payment_term", "delivery_type", "product_name", "qty", "unit_price", "notes",
-    ]
-    header_fill = PatternFill("solid", fgColor="1e8449")
-    bold_white   = Font(bold=True, color="FFFFFF")
-
-    for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.font   = bold_white
-        cell.fill   = header_fill
-        cell.alignment = Alignment(horizontal="center")
-        ws.column_dimensions[cell.column_letter].width = max(len(h) + 4, 16)
-
-    sample_rows = [
-        ["INV-2026-0001", "GENESIS GROUP",  "2026-01-15", "2026-02-15", "net_30",    "delivery", "Rice 50kg",   10, 85000,  ""],
-        ["INV-2026-0001", "GENESIS GROUP",  "2026-01-15", "2026-02-15", "net_30",    "delivery", "Beans 50kg",   5, 45000,  ""],
-        ["",              "ACME Corp",       "2026-01-16", "",           "cash",       "pickup",   "Rice 50kg",    2, 85000,  "Urgent order"],
-    ]
-    for r, row_data in enumerate(sample_rows, 2):
-        for c, val in enumerate(row_data, 1):
-            ws.cell(row=r, column=c, value=val)
-
-    notes_ws = wb.create_sheet("Notes")
-    notes_ws["A1"] = "Column Notes"
-    notes_ws["A1"].font = Font(bold=True)
-    notes_data = [
-        ("invoice_number", "Optional. Leave blank to auto-generate. Repeat the same number across rows to group items into one invoice."),
-        ("customer_name",  "Must exactly match a customer name in the system (case-insensitive)."),
-        ("invoice_date",   "Required. Format: YYYY-MM-DD"),
-        ("due_date",       "Optional. Format: YYYY-MM-DD"),
-        ("payment_term",   "Optional. Values: cash, immediate, net_7, net_14, net_30, net_45, net_60, net_90. Default: cash"),
-        ("delivery_type",  "Optional. Values: delivery, pickup. Default: pickup"),
-        ("product_name",   "Must exactly match a product name in the system (case-insensitive)."),
-        ("qty",            "Required. Must be > 0"),
-        ("unit_price",     "Required. Selling price per unit (numbers only, no currency symbol)."),
-        ("notes",          "Optional. Any notes for this invoice."),
-    ]
-    for i, (col, desc) in enumerate(notes_data, 2):
-        notes_ws.cell(row=i, column=1, value=col).font = Font(bold=True)
-        notes_ws.cell(row=i, column=2, value=desc)
-    notes_ws.column_dimensions["A"].width = 18
-    notes_ws.column_dimensions["B"].width = 80
-
-    buf = BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="invoice_import_template.xlsx"'},
-    )
-
-
-@router.post("/bulk-upload", response_model=schemas.JobEnqueuedResponse, status_code=202)
-async def bulk_upload_invoices(
-    file: UploadFile = File(...),
-    current_user: models.User = Depends(require_not_analyst),
-):
-    """
-    Upload an Excel file to import invoices. Returns a task_id immediately.
-    Poll GET /api/v1/jobs/{task_id} for result.
-    """
-    import uuid
-    from utils.s3 import upload_bytes
-    from utils.tasks import process_invoice_bulk_task
-
-    content = await file.read()
-    s3_key = f"uploads/invoices_{uuid.uuid4()}.xlsx"
-    upload_bytes(s3_key, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    task = process_invoice_bulk_task.delay(s3_key, current_user.id)
-    return schemas.JobEnqueuedResponse(
-        task_id=task.id,
-        message=f"Invoice import queued. Poll /api/v1/jobs/{task.id} for result.",
-    )

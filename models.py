@@ -274,6 +274,7 @@ class Invoice(Base):
     notes = Column(Text)
     total_amount = Column(Numeric(15, 2), default=0)
     amount_paid = Column(Numeric(15, 2), default=0)
+    custom_pdf_s3_key = Column(String(255), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
