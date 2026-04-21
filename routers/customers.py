@@ -171,54 +171,67 @@ def customer_analytics(
     if not c:
         raise HTTPException(404, "Customer not found")
 
-    invoices = (
-        db.query(models.Invoice)
-        .filter(
-            models.Invoice.customer_id == customer_id,
-            models.Invoice.status == models.InvoiceStatus.active,
+    base_filter = [
+        models.Invoice.customer_id == customer_id,
+        models.Invoice.status == models.InvoiceStatus.active,
+    ]
+
+    # Aggregate invoice-level stats in one query
+    inv_agg = (
+        db.query(
+            func.count(models.Invoice.id).label("num_orders"),
+            func.sum(models.Invoice.total_amount).label("total_value"),
+            func.max(models.Invoice.invoice_date).label("last_order"),
         )
+        .filter(*base_filter)
+        .one()
+    )
+
+    # Aggregate item-level stats in one query
+    item_agg = (
+        db.query(
+            func.sum(models.InvoiceItem.quantity).label("total_qty"),
+            func.sum(models.InvoiceItem.cost_price * models.InvoiceItem.quantity).label("cost_of_sales"),
+        )
+        .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
+        .filter(*base_filter)
+        .one()
+    )
+
+    # Payment term + delivery type frequency
+    pt_rows = (
+        db.query(models.Invoice.payment_term, func.count(models.Invoice.id).label("cnt"))
+        .filter(*base_filter)
+        .group_by(models.Invoice.payment_term)
+        .all()
+    )
+    dt_rows = (
+        db.query(models.Invoice.delivery_type, func.count(models.Invoice.id).label("cnt"))
+        .filter(*base_filter)
+        .group_by(models.Invoice.delivery_type)
         .all()
     )
 
-    total_value = sum(float(inv.total_amount) for inv in invoices)
-    total_qty = sum(
-        float(item.quantity)
-        for inv in invoices
-        for item in inv.items
-    )
-    # Cost of sales = sum(cost_price * quantity) for all invoice items
-    cost_of_sales = sum(
-        float(item.cost_price) * float(item.quantity)
-        for inv in invoices
-        for item in inv.items
-    )
-    num_orders = len(invoices)
-    avg_order = total_value / num_orders if num_orders else 0
-    last_order = max((inv.invoice_date for inv in invoices), default=None)
-
-    # payment term frequency
-    pt_counts: dict = {}
-    dt_counts: dict = {}
-    for inv in invoices:
-        pt_counts[inv.payment_term] = pt_counts.get(inv.payment_term, 0) + 1
-        dt_counts[inv.delivery_type.value] = dt_counts.get(inv.delivery_type.value, 0) + 1
-
-    pref_pt = max(pt_counts, key=pt_counts.get) if pt_counts else None
-    pref_dt = max(dt_counts, key=dt_counts.get) if dt_counts else None
+    num_orders  = int(inv_agg.num_orders or 0)
+    total_value = float(inv_agg.total_value or 0)
+    total_qty   = float(item_agg.total_qty or 0)
+    cos         = float(item_agg.cost_of_sales or 0)
+    avg_order   = total_value / num_orders if num_orders else 0
+    pref_pt     = max(pt_rows, key=lambda r: r.cnt).payment_term if pt_rows else None
+    pref_dt     = max(dt_rows, key=lambda r: r.cnt).delivery_type.value if dt_rows else None
 
     base = schemas.CustomerOut.model_validate(c).model_dump()
-    out = schemas.CustomerDetailOut(
+    return schemas.CustomerDetailOut(
         **base,
         total_sales_value=total_value,
         total_quantity_bought=total_qty,
         total_orders=num_orders,
         average_order_value=avg_order,
-        last_order_date=last_order,
+        last_order_date=inv_agg.last_order,
         preferred_payment_term=pref_pt,
         preferred_delivery_type=pref_dt,
-        cost_of_sales=cost_of_sales,
+        cost_of_sales=cos,
     )
-    return out
 
 
 @router.get("/{customer_id}/top-products")
@@ -259,3 +272,101 @@ def customer_top_products(
          "total_qty": float(r.total_qty), "total_value": float(r.total_value)}
         for r in rows
     ]
+
+
+@router.get("/{customer_id}/cost-of-sales")
+def customer_cost_of_sales(
+    customer_id: int,
+    date_from: Optional[date] = None,
+    date_to:   Optional[date] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    c = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+    if not c:
+        raise HTTPException(404, "Customer not found")
+
+    base_filter = [
+        models.Invoice.customer_id == customer_id,
+        models.Invoice.status == models.InvoiceStatus.active,
+    ]
+    if date_from:
+        base_filter.append(models.Invoice.invoice_date >= date_from)
+    if date_to:
+        base_filter.append(models.Invoice.invoice_date <= date_to)
+
+    # Product breakdown
+    product_rows = (
+        db.query(
+            models.Product.id.label("product_id"),
+            models.Product.product_name,
+            func.sum(models.InvoiceItem.quantity).label("qty"),
+            func.sum(models.InvoiceItem.cost_price * models.InvoiceItem.quantity).label("cost"),
+            func.sum(models.InvoiceItem.line_total).label("revenue"),
+        )
+        .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
+        .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
+        .filter(*base_filter)
+        .group_by(models.Product.id, models.Product.product_name)
+        .order_by(func.sum(models.InvoiceItem.cost_price * models.InvoiceItem.quantity).desc())
+        .all()
+    )
+
+    # Invoice breakdown
+    invoice_rows = (
+        db.query(
+            models.Invoice.id,
+            models.Invoice.invoice_number,
+            models.Invoice.invoice_date,
+            func.sum(models.InvoiceItem.cost_price * models.InvoiceItem.quantity).label("cost"),
+            func.sum(models.InvoiceItem.line_total).label("revenue"),
+        )
+        .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
+        .filter(*base_filter)
+        .group_by(models.Invoice.id, models.Invoice.invoice_number, models.Invoice.invoice_date)
+        .order_by(models.Invoice.invoice_date.desc())
+        .all()
+    )
+
+    total_cost    = sum(float(r.cost or 0)    for r in product_rows)
+    total_revenue = sum(float(r.revenue or 0) for r in product_rows)
+    gross_profit  = total_revenue - total_cost
+    gross_margin  = round(gross_profit / total_revenue * 100, 2) if total_revenue else 0
+
+    return {
+        "customer_name": c.customer_name,
+        "summary": {
+            "total_cost": total_cost,
+            "total_revenue": total_revenue,
+            "gross_profit": gross_profit,
+            "gross_margin_pct": gross_margin,
+        },
+        "by_product": [
+            {
+                "product_id": r.product_id,
+                "product_name": r.product_name,
+                "qty": float(r.qty or 0),
+                "cost": float(r.cost or 0),
+                "revenue": float(r.revenue or 0),
+                "gross_profit": float(r.revenue or 0) - float(r.cost or 0),
+                "margin_pct": round(
+                    (float(r.revenue or 0) - float(r.cost or 0)) / float(r.revenue) * 100, 2
+                ) if r.revenue else 0,
+            }
+            for r in product_rows
+        ],
+        "by_invoice": [
+            {
+                "invoice_id": r.id,
+                "invoice_number": r.invoice_number,
+                "invoice_date": str(r.invoice_date),
+                "cost": float(r.cost or 0),
+                "revenue": float(r.revenue or 0),
+                "gross_profit": float(r.revenue or 0) - float(r.cost or 0),
+                "margin_pct": round(
+                    (float(r.revenue or 0) - float(r.cost or 0)) / float(r.revenue) * 100, 2
+                ) if r.revenue else 0,
+            }
+            for r in invoice_rows
+        ],
+    }
