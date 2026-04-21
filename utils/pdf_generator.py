@@ -33,7 +33,7 @@ BORDER_GRAY = colors.HexColor("#cccccc")
 
 # ── Company constants ─────────────────────────────────────────────────────────
 _COMPANY_NAME     = "FOODSTUFF STORE"
-_COMPANY_TAGLINE  = "eat fresh, live healthy"
+_COMPANY_TAGLINE  = "Eat fresh, Live healthy"
 _COMPANY_SUBTITLE = "The Online Foodstuff Store"
 _COMPANY_ADDR_HQ  = "The Regent Place, Beside NIPCO Filling Station, Kubwa, Abuja."
 _COMPANY_ADDR_LG  = "25b, Adewale Kolawole Street, Zone 10, Lekki Phase 1, Lagos"
