@@ -1,12 +1,12 @@
 from typing import List, Optional
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import get_current_user, require_admin_or_manager
+from dependencies import get_current_user, require_admin_or_manager, require_not_analyst
 import models
 import schemas
 from utils import audit
@@ -217,3 +217,93 @@ def cancel_invoice(
     db.commit()
     db.refresh(inv)
     return inv
+
+
+@router.get("/template")
+def download_invoice_template():
+    """Return a sample Excel file showing the required import format."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Invoices"
+
+    headers = [
+        "invoice_number", "customer_name", "invoice_date", "due_date",
+        "payment_term", "delivery_type", "product_name", "qty", "unit_price", "notes",
+    ]
+    header_fill = PatternFill("solid", fgColor="1e8449")
+    bold_white   = Font(bold=True, color="FFFFFF")
+
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font   = bold_white
+        cell.fill   = header_fill
+        cell.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[cell.column_letter].width = max(len(h) + 4, 16)
+
+    sample_rows = [
+        ["INV-2026-0001", "GENESIS GROUP",  "2026-01-15", "2026-02-15", "net_30",    "delivery", "Rice 50kg",   10, 85000,  ""],
+        ["INV-2026-0001", "GENESIS GROUP",  "2026-01-15", "2026-02-15", "net_30",    "delivery", "Beans 50kg",   5, 45000,  ""],
+        ["",              "ACME Corp",       "2026-01-16", "",           "cash",       "pickup",   "Rice 50kg",    2, 85000,  "Urgent order"],
+    ]
+    for r, row_data in enumerate(sample_rows, 2):
+        for c, val in enumerate(row_data, 1):
+            ws.cell(row=r, column=c, value=val)
+
+    notes_ws = wb.create_sheet("Notes")
+    notes_ws["A1"] = "Column Notes"
+    notes_ws["A1"].font = Font(bold=True)
+    notes_data = [
+        ("invoice_number", "Optional. Leave blank to auto-generate. Repeat the same number across rows to group items into one invoice."),
+        ("customer_name",  "Must exactly match a customer name in the system (case-insensitive)."),
+        ("invoice_date",   "Required. Format: YYYY-MM-DD"),
+        ("due_date",       "Optional. Format: YYYY-MM-DD"),
+        ("payment_term",   "Optional. Values: cash, immediate, net_7, net_14, net_30, net_45, net_60, net_90. Default: cash"),
+        ("delivery_type",  "Optional. Values: delivery, pickup. Default: pickup"),
+        ("product_name",   "Must exactly match a product name in the system (case-insensitive)."),
+        ("qty",            "Required. Must be > 0"),
+        ("unit_price",     "Required. Selling price per unit (numbers only, no currency symbol)."),
+        ("notes",          "Optional. Any notes for this invoice."),
+    ]
+    for i, (col, desc) in enumerate(notes_data, 2):
+        notes_ws.cell(row=i, column=1, value=col).font = Font(bold=True)
+        notes_ws.cell(row=i, column=2, value=desc)
+    notes_ws.column_dimensions["A"].width = 18
+    notes_ws.column_dimensions["B"].width = 80
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="invoice_import_template.xlsx"'},
+    )
+
+
+@router.post("/bulk-upload", response_model=schemas.JobEnqueuedResponse, status_code=202)
+async def bulk_upload_invoices(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(require_not_analyst),
+):
+    """
+    Upload an Excel file to import invoices. Returns a task_id immediately.
+    Poll GET /api/v1/jobs/{task_id} for result.
+    """
+    import uuid
+    from utils.s3 import upload_bytes
+    from utils.tasks import process_invoice_bulk_task
+
+    content = await file.read()
+    s3_key = f"uploads/invoices_{uuid.uuid4()}.xlsx"
+    upload_bytes(s3_key, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    task = process_invoice_bulk_task.delay(s3_key, current_user.id)
+    return schemas.JobEnqueuedResponse(
+        task_id=task.id,
+        message=f"Invoice import queued. Poll /api/v1/jobs/{task.id} for result.",
+    )

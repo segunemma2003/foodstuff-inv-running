@@ -96,9 +96,28 @@ def seed_defaults(db: Session):
 
 # ─── App Lifespan ─────────────────────────────────────────────────────────────
 
+def run_migrations():
+    """Idempotent schema migrations that run on every startup."""
+    from sqlalchemy import text
+    from database import DATABASE_URL
+    with engine.connect() as conn:
+        if DATABASE_URL.startswith("postgresql"):
+            conn.execute(text(
+                "ALTER TABLE invoices ALTER COLUMN quotation_id DROP NOT NULL"
+            ))
+        else:
+            # SQLite: recreate is complex — skip (dev only, column already nullable after model change)
+            pass
+        conn.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    try:
+        run_migrations()
+    except Exception:
+        pass  # ignore if column already nullable or table doesn't exist yet
     db: Session = SessionLocal()
     try:
         seed_defaults(db)

@@ -264,7 +264,7 @@ class Invoice(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     invoice_number = Column(String(50), unique=True, nullable=False)
-    quotation_id = Column(Integer, ForeignKey("quotations.id"), unique=True, nullable=False)
+    quotation_id = Column(Integer, ForeignKey("quotations.id"), unique=True, nullable=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     invoice_date = Column(Date, nullable=False)
     payment_term = Column(String(50), nullable=False)
