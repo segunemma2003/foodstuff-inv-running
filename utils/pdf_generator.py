@@ -118,7 +118,7 @@ def _fmt_term(term: str) -> str:
     return term.replace("_", " ").upper()
 
 
-def _logo(target_width_cm: float = 2.2) -> Optional[RLImage]:
+def _logo(target_width_cm: float = 1.6) -> Optional[RLImage]:
     if not os.path.exists(_LOGO_PATH):
         return None
     img = RLImage(_LOGO_PATH)
@@ -144,7 +144,7 @@ def _styles():
     s.add(ParagraphStyle("Muted",      parent=s["Normal"], textColor=MID_GRAY, fontSize=8))
     s.add(ParagraphStyle("GreenBold",  parent=s["Normal"], fontName=_FONT_B,
                          textColor=GREEN, fontSize=10))
-    s.add(ParagraphStyle("DocTitle",   parent=s["Normal"], fontName=_FONT_B, fontSize=16))
+    s.add(ParagraphStyle("DocTitle",   parent=s["Normal"], fontName=_FONT_B, fontSize=12))
     s.add(ParagraphStyle("AddrRight",  parent=s["Normal"], fontSize=8,
                          alignment=TA_RIGHT, leading=12))
     s.add(ParagraphStyle("TableHdr",   parent=s["Normal"], fontName=_FONT_B, fontSize=9))
@@ -185,6 +185,7 @@ def _header_band(branch: str, styles) -> Table:
     t = Table([[left_items, Paragraph(addr, styles["AddrRight"])]], colWidths=[9 * cm, 9 * cm])
     t.setStyle(TableStyle([
         ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("ALIGN",         (0, 0), (0, -1),  "LEFT"),
         ("TOPPADDING",    (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ("LEFTPADDING",   (0, 0), (0, -1),  0),
@@ -225,7 +226,7 @@ def _date_row(c1_lbl: str, c1_val: str,
 
 def _items_table(items: list, styles) -> Table:
     header = [
-        Paragraph("DESCRIPTION", styles["TableHdr"]),
+        Paragraph("PRODUCT NAME", styles["TableHdr"]),
         Paragraph("QTY",         styles["TableHdrR"]),
         Paragraph("U.O.M",       styles["TableHdr"]),
         Paragraph("UNIT PRICE",  styles["TableHdrR"]),
