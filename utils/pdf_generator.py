@@ -144,7 +144,7 @@ def _styles():
     s.add(ParagraphStyle("Muted",      parent=s["Normal"], textColor=MID_GRAY, fontSize=8))
     s.add(ParagraphStyle("GreenBold",  parent=s["Normal"], fontName=_FONT_B,
                          textColor=GREEN, fontSize=10))
-    s.add(ParagraphStyle("DocTitle",   parent=s["Normal"], fontName=_FONT_B, fontSize=20))
+    s.add(ParagraphStyle("DocTitle",   parent=s["Normal"], fontName=_FONT_B, fontSize=16))
     s.add(ParagraphStyle("AddrRight",  parent=s["Normal"], fontSize=8,
                          alignment=TA_RIGHT, leading=12))
     s.add(ParagraphStyle("TableHdr",   parent=s["Normal"], fontName=_FONT_B, fontSize=9))
@@ -262,17 +262,20 @@ def _totals_section(total_amount: Decimal, amount_paid: Decimal, styles) -> list
     balance = max(Decimal("0"), total_amount - amount_paid)
     out = []
 
-    # Small subtotal box aligned right
+    # Totals aligned to AMOUNT column (starts at 14.5 cm = 7.5+1.5+2+3.5)
+    _LW = 14.5 * cm   # label column width
+    _VW = 3.5  * cm   # value column width — matches AMOUNT column in items table
+
     box_t = Table(
         [["", Paragraph(_fc(total_amount), styles["BoldRight"])]],
-        colWidths=[11 * cm, 7 * cm],
+        colWidths=[_LW, _VW],
     )
     box_t.setStyle(TableStyle([
         ("BOX",           (1, 0), (1, 0), 0.5, BORDER_GRAY),
         ("TOPPADDING",    (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("LEFTPADDING",   (1, 0), (1, 0),   8),
-        ("RIGHTPADDING",  (1, 0), (1, 0),   8),
+        ("LEFTPADDING",   (1, 0), (1, 0),   4),
+        ("RIGHTPADDING",  (1, 0), (1, 0),   4),
     ]))
     out.append(box_t)
 
@@ -280,7 +283,7 @@ def _totals_section(total_amount: Decimal, amount_paid: Decimal, styles) -> list
     vat_t = Table(
         [[Paragraph("Total (VAT incl.):", styles["Right"]),
           Paragraph(f"<b>{_fc(total_amount)}</b>", styles["BoldRight"])]],
-        colWidths=[11 * cm, 7 * cm],
+        colWidths=[_LW, _VW],
     )
     vat_t.setStyle(TableStyle([
         ("LINEABOVE",     (0, 0), (-1, 0), 0.5, DARK_TEXT),
@@ -298,7 +301,7 @@ def _totals_section(total_amount: Decimal, amount_paid: Decimal, styles) -> list
                 [Paragraph("<b>Balance Due:</b>", styles["BoldRight"]),
                  Paragraph(f"<b>{_fc(balance)}</b>", styles["BoldRight"])],
             ],
-            colWidths=[11 * cm, 7 * cm],
+            colWidths=[_LW, _VW],
         )
         extra_t.setStyle(TableStyle([
             ("TOPPADDING",    (0, 0), (-1, -1), 3),
