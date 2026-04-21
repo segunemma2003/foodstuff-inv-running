@@ -198,14 +198,18 @@ def overview(
 
 class CostOfSalesEmailRequest(BaseModel):
     to: str
-    date_from: Optional[date] = None
-    date_to:   Optional[date] = None
+    date_from:   Optional[date] = None
+    date_to:     Optional[date] = None
+    customer_id: Optional[int]  = None
+    product_id:  Optional[int]  = None
 
 
 @router.get("/cost-of-sales")
 def cost_of_sales_detail(
-    date_from: Optional[date] = None,
-    date_to:   Optional[date] = None,
+    date_from:   Optional[date] = None,
+    date_to:     Optional[date] = None,
+    customer_id: Optional[int]  = None,
+    product_id:  Optional[int]  = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
@@ -227,6 +231,10 @@ def cost_of_sales_detail(
         item_q = item_q.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
         item_q = item_q.filter(models.Invoice.invoice_date <= date_to)
+    if customer_id:
+        item_q = item_q.filter(models.Invoice.customer_id == customer_id)
+    if product_id:
+        item_q = item_q.filter(models.InvoiceItem.product_id == product_id)
 
     product_rows = (
         item_q
@@ -256,6 +264,10 @@ def cost_of_sales_detail(
         inv_q = inv_q.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
         inv_q = inv_q.filter(models.Invoice.invoice_date <= date_to)
+    if customer_id:
+        inv_q = inv_q.filter(models.Invoice.customer_id == customer_id)
+    if product_id:
+        inv_q = inv_q.filter(models.InvoiceItem.product_id == product_id)
 
     invoice_rows = (
         inv_q
@@ -324,6 +336,8 @@ def email_cost_of_sales_report(
     data = cost_of_sales_detail(
         date_from=body.date_from,
         date_to=body.date_to,
+        customer_id=body.customer_id,
+        product_id=body.product_id,
         db=db,
         _=current_user,
     )
