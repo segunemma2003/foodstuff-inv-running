@@ -21,7 +21,7 @@ import schemas
 from utils.tasks import generate_report_task
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
-require_report_roles = require_roles("admin", "manager", "analyst", "sales")
+require_report_roles = require_roles("admin", "manager", "analyst")
 
 
 def _enqueue(report_type: str, params: dict) -> schemas.JobEnqueuedResponse:

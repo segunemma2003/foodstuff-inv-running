@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import require_admin_manager_sales
+from dependencies import require_admin_or_manager
 import models
 import schemas
 
@@ -23,7 +23,7 @@ def list_audit_trail(
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_admin_manager_sales),
+    _: models.User = Depends(require_admin_or_manager),
 ):
     q = db.query(models.AuditTrail)
     if entity_type:

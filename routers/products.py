@@ -16,6 +16,7 @@ from dependencies import (
     require_market_view_roles,
     require_market_manage_roles,
     require_product_upload_roles,
+    require_product_create_roles,
 )
 import models
 import schemas
@@ -202,7 +203,7 @@ def list_products(
 def create_product(
     body: schemas.ProductCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_not_analyst),
+    current_user: models.User = Depends(require_product_create_roles),
 ):
     if body.sku and db.query(models.Product).filter(models.Product.sku == body.sku).first():
         raise HTTPException(400, "SKU already exists")
