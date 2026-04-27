@@ -501,6 +501,59 @@ def send_invoice_email(
     return schemas.MessageResponse(message=f"Invoice sent to {len(emails)} recipient(s)")
 
 
+@router.post("/{invoice_id}/upload-to-make", response_model=schemas.MessageResponse)
+def upload_invoice_to_make(
+    invoice_id: int,
+    body: InvoiceSendEmailRequest,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Send the existing invoice PDF to primary and additional recipients."""
+    from utils.pdf_generator import generate_invoice_pdf as gen_pdf
+    from utils.email import send_email
+    from utils.s3 import download_bytes
+
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+
+    if inv.custom_pdf_s3_key:
+        pdf_bytes = download_bytes(inv.custom_pdf_s3_key)
+        send_document_to_make_from_s3(
+            doc_type="invoice",
+            document_number=inv.invoice_number,
+            s3_key=inv.custom_pdf_s3_key,
+            filename=f"{inv.invoice_number}.pdf",
+            customer_name=inv.customer.customer_name if inv.customer else "",
+        )
+    else:
+        bank_accounts = (
+            db.query(models.PaymentAccount)
+            .filter(models.PaymentAccount.is_active == True)
+            .order_by(models.PaymentAccount.is_default.desc())
+            .all()
+        )
+        pdf_bytes = gen_pdf(inv, bank_accounts=bank_accounts)
+
+    emails: List[str] = [INVOICE_PRIMARY_RECIPIENT]
+    if body.additional_emails:
+        emails.extend([e.strip() for e in body.additional_emails if e.strip()])
+    emails = list(dict.fromkeys(emails))
+    if not emails:
+        raise HTTPException(400, "No email addresses to send to")
+
+    for email in emails:
+        send_email(
+            to=email,
+            subject=f"Invoice {inv.invoice_number}",
+            html=f"<p>Please find attached invoice <strong>{inv.invoice_number}</strong>.</p>",
+            text=f"Please find attached invoice {inv.invoice_number}.",
+            attachments=[(f"{inv.invoice_number}.pdf", pdf_bytes, "application/pdf")],
+        )
+
+    return schemas.MessageResponse(message=f"Invoice sent to {len(emails)} recipient(s)")
+
+
 @router.post("/{invoice_id}/cancel", response_model=schemas.InvoiceOut)
 def cancel_invoice(
     invoice_id: int,

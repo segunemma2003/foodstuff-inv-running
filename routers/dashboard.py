@@ -424,6 +424,19 @@ def email_cost_of_sales_report(
     return {"message": f"Report sent to {len(recipients)} recipient(s)"}
 
 
+@router.post("/cost-of-sales/upload-to-make")
+def upload_cost_of_sales_to_make(
+    body: CostOfSalesEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Upload-to-make action for Cost of Sales.
+    Uses the Cost of Sales recipient flow (primary + additional emails).
+    """
+    return email_cost_of_sales_report(body=body, db=db, current_user=current_user)
+
+
 @router.get("/cost-of-sales/pdf")
 def download_cost_of_sales_pdf(
     date_from:   Optional[date] = None,
