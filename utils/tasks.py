@@ -17,6 +17,7 @@ Task categories
 """
 from celery_app import celery_app
 import os
+from sqlalchemy import func
 from utils.email import send_email
 
 INVOICE_PRIMARY_RECIPIENT = os.getenv("INVOICE_PRIMARY_RECIPIENT_EMAIL", "foodstuffstoreinvoices@gmail.com")
@@ -266,6 +267,14 @@ def process_product_bulk_task(self, s3_key: str, user_id: int, market_id: int | 
                     resolved_market_id = cat.id
             if resolved_market_id is None:
                 errors.append(f"Row {row_num}: market is required and must exist")
+                continue
+            if db.query(models.Product).filter(
+                models.Product.category_id == resolved_market_id,
+                func.lower(models.Product.product_name) == str(name).strip().lower(),
+            ).first():
+                errors.append(
+                    f"Row {row_num}: product '{name}' already exists in the selected market"
+                )
                 continue
             db.add(models.Product(
                 product_name=name,

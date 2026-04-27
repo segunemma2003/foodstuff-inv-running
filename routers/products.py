@@ -25,6 +25,21 @@ from utils.pricing import get_current_cost
 router = APIRouter(prefix="/products", tags=["Products"])
 
 
+def _product_name_exists_in_market(
+    db: Session,
+    product_name: str,
+    market_id: Optional[int],
+    exclude_product_id: Optional[int] = None,
+) -> bool:
+    q = db.query(models.Product).filter(
+        func.lower(models.Product.product_name) == product_name.strip().lower(),
+        models.Product.category_id == market_id,
+    )
+    if exclude_product_id is not None:
+        q = q.filter(models.Product.id != exclude_product_id)
+    return db.query(q.exists()).scalar()
+
+
 def _enrich(product: models.Product, db: Session) -> schemas.ProductOut:
     from utils.s3 import presigned_url as s3_presigned
     out = schemas.ProductOut.model_validate(product)
@@ -195,6 +210,10 @@ def create_product(
     selected_market = payload.pop("market_id", None)
     if selected_market is not None:
         payload["category_id"] = selected_market
+    product_name = str(payload.get("product_name") or "").strip()
+    market_for_unique = payload.get("category_id")
+    if product_name and _product_name_exists_in_market(db, product_name, market_for_unique):
+        raise HTTPException(400, "Product name already exists in this market")
     product = models.Product(**payload)
     db.add(product)
     db.flush()
@@ -231,6 +250,10 @@ def update_product(
     selected_market = payload.pop("market_id", None)
     if selected_market is not None:
         payload["category_id"] = selected_market
+    next_name = str(payload.get("product_name", p.product_name) or "").strip()
+    next_market = payload.get("category_id", p.category_id)
+    if next_name and _product_name_exists_in_market(db, next_name, next_market, exclude_product_id=p.id):
+        raise HTTPException(400, "Product name already exists in this market")
     old = {k: str(getattr(p, k)) for k in payload}
     for field, value in payload.items():
         setattr(p, field, value)
