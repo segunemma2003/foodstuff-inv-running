@@ -52,14 +52,22 @@ def send_email_with_attachment_task(
         if not normalized:
             raise ValueError("No recipients provided")
         content = base64.b64decode(content_b64.encode("utf-8"))
+        outcomes: list[dict[str, str | None]] = []
         for recipient in normalized:
-            send_email(
-                to=recipient,
-                subject=subject,
-                html=html,
-                text=text,
-                attachments=[(filename, content, mime_type)],
-            )
+            try:
+                send_email(
+                    to=recipient,
+                    subject=subject,
+                    html=html,
+                    text=text,
+                    attachments=[(filename, content, mime_type)],
+                )
+                outcomes.append({"recipient": recipient, "status": "delivered", "error": None})
+            except Exception as send_exc:
+                outcomes.append({"recipient": recipient, "status": "failed", "error": str(send_exc)})
+        if not any(item["status"] == "delivered" for item in outcomes):
+            raise ValueError("All recipients failed")
+        return {"delivery_outcomes": outcomes}
     except Exception as exc:
         raise self.retry(exc=exc)
 
@@ -227,14 +235,22 @@ def send_invoice_to_recipients_task(self, invoice_id: int, recipients: list[str]
             customer_name=customer_name,
             total=float(inv.total_amount),
         )
+        outcomes: list[dict[str, str | None]] = []
         for recipient in normalized_recipients:
-            send_email(
-                to=recipient,
-                subject=subject,
-                html=html,
-                text=text,
-                attachments=[(f"{inv.invoice_number}.pdf", pdf_bytes, "application/pdf")],
-            )
+            try:
+                send_email(
+                    to=recipient,
+                    subject=subject,
+                    html=html,
+                    text=text,
+                    attachments=[(f"{inv.invoice_number}.pdf", pdf_bytes, "application/pdf")],
+                )
+                outcomes.append({"recipient": recipient, "status": "delivered", "error": None})
+            except Exception as send_exc:
+                outcomes.append({"recipient": recipient, "status": "failed", "error": str(send_exc)})
+        if not any(item["status"] == "delivered" for item in outcomes):
+            raise ValueError("All recipients failed")
+        return {"delivery_outcomes": outcomes}
     except Exception as exc:
         raise self.retry(exc=exc)
     finally:

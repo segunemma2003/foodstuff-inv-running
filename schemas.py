@@ -637,6 +637,7 @@ class QueueEventOut(BaseModel):
     created_at: datetime
     status: Optional[str] = None
     error: Optional[str] = None
+    delivery_outcomes: Optional[List[dict]] = None
 
 
 # ─── Settings ────────────────────────────────────────────────────────────────

@@ -467,6 +467,12 @@ def list_queue_events(
         task = AsyncResult(event.task_id, app=celery_app)
         item = schemas.QueueEventOut.model_validate(event).model_dump()
         item["status"] = task.state
+        item["delivery_outcomes"] = None
+        task_result = task.result if task.state == "SUCCESS" else None
+        if isinstance(task_result, dict):
+            outcomes = task_result.get("delivery_outcomes")
+            if isinstance(outcomes, list):
+                item["delivery_outcomes"] = outcomes
         if task.state == "FAILURE":
             item["error"] = str(task.info)
         out.append(schemas.QueueEventOut(**item))
