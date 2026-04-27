@@ -218,7 +218,11 @@ def customer_analytics(
     cos         = float(item_agg.cost_of_sales or 0)
     avg_order   = total_value / num_orders if num_orders else 0
     pref_pt     = max(pt_rows, key=lambda r: r.cnt).payment_term if pt_rows else None
-    pref_dt     = max(dt_rows, key=lambda r: r.cnt).delivery_type.value if dt_rows else None
+    pref_dt = None
+    if dt_rows:
+        raw_delivery = max(dt_rows, key=lambda r: r.cnt).delivery_type
+        # Backward compatibility: older rows/environments may return plain string.
+        pref_dt = raw_delivery.value if hasattr(raw_delivery, "value") else str(raw_delivery)
 
     base = schemas.CustomerOut.model_validate(c).model_dump()
     return schemas.CustomerDetailOut(
