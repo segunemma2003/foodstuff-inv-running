@@ -1,5 +1,6 @@
 from typing import List, Optional
 from datetime import date
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -11,12 +12,14 @@ import models
 import schemas
 from utils import audit
 from utils.tasks import generate_invoice_pdf_task
+from utils.make_integration import send_document_to_make_from_s3
 
 
 class InvoiceSendEmailRequest(BaseModel):
     additional_emails: Optional[List[str]] = None
 
 router = APIRouter(prefix="/invoices", tags=["Invoices"])
+INVOICE_PRIMARY_RECIPIENT = os.getenv("INVOICE_PRIMARY_RECIPIENT_EMAIL", "foodstuffstoreinvoices@gmail.com")
 
 
 @router.get("/approved-quotations", response_model=List[schemas.QuotationOut])
@@ -376,6 +379,13 @@ async def upload_invoice_pdf(
     inv.custom_pdf_s3_key = s3_key
     db.commit()
     db.refresh(inv)
+    send_document_to_make_from_s3(
+        doc_type="invoice",
+        document_number=inv.invoice_number,
+        s3_key=s3_key,
+        filename=f"{inv.invoice_number}.pdf",
+        customer_name=inv.customer.customer_name if inv.customer else "",
+    )
     return inv
 
 
@@ -438,8 +448,10 @@ def send_invoice_email(
     emails: List[str] = []
     if inv.customer and inv.customer.email:
         emails.append(inv.customer.email)
+    emails.append(INVOICE_PRIMARY_RECIPIENT)
     if body.additional_emails:
         emails.extend([e.strip() for e in body.additional_emails if e.strip()])
+    emails = list(dict.fromkeys(emails))
 
     if not emails:
         raise HTTPException(400, "No email addresses to send to")

@@ -524,3 +524,72 @@ def generate_payment_receipt(payment: models.Payment) -> bytes:
 
     doc.build(story)
     return buf.getvalue()
+
+
+def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "") -> bytes:
+    _ensure_unicode_font()
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=1.5 * cm,
+        leftMargin=1.5 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.5 * cm,
+    )
+    styles = _styles()
+    story = []
+    summary = report_data.get("summary", {})
+    by_product = report_data.get("by_product", [])
+
+    story.append(_header_band("", styles))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER_GRAY, spaceAfter=8))
+    story.append(Paragraph(f"Cost of Sales Report{title_suffix}", styles["DocTitle"]))
+    story.append(Spacer(1, 0.25 * cm))
+
+    summary_table = Table(
+        [
+            ["Total Cost", _fc(summary.get("total_cost", 0))],
+            ["Total Revenue", _fc(summary.get("total_revenue", 0))],
+            ["Gross Profit", _fc(summary.get("gross_profit", 0))],
+            ["Gross Margin", f"{float(summary.get('gross_margin_pct', 0)):.2f}%"],
+        ],
+        colWidths=[7 * cm, 11 * cm],
+    )
+    summary_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, BORDER_GRAY),
+        ("BACKGROUND", (0, 0), (-1, 0), GREEN_LIGHT),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(summary_table)
+    story.append(Spacer(1, 0.4 * cm))
+
+    rows = [[
+        Paragraph("PRODUCT", styles["TableHdr"]),
+        Paragraph("QTY", styles["TableHdrR"]),
+        Paragraph("COST", styles["TableHdrR"]),
+        Paragraph("REVENUE", styles["TableHdrR"]),
+        Paragraph("MARGIN", styles["TableHdrR"]),
+    ]]
+    for row in by_product:
+        rows.append([
+            Paragraph(str(row.get("product_name", "")), styles["Normal"]),
+            Paragraph(f"{float(row.get('qty', 0)):.0f}", styles["Right"]),
+            Paragraph(_fmt(float(row.get("cost", 0))), styles["Right"]),
+            Paragraph(_fmt(float(row.get("revenue", 0))), styles["Right"]),
+            Paragraph(f"{float(row.get('margin_pct', 0)):.2f}%", styles["Right"]),
+        ])
+    table = Table(rows, colWidths=[6.8 * cm, 1.7 * cm, 3.1 * cm, 3.1 * cm, 3.3 * cm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("LINEABOVE", (0, 0), (-1, 0), 1, DARK_TEXT),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, DARK_TEXT),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.5, BORDER_GRAY),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 0.6 * cm))
+    story.append(_footer_line(styles))
+    doc.build(story)
+    return buf.getvalue()

@@ -98,6 +98,10 @@ class CategoryOut(BaseModel):
     description: Optional[str] = None
 
 
+class MarketOut(CategoryOut):
+    pass
+
+
 # ─── Customers ───────────────────────────────────────────────────────────────
 
 class CustomerCreate(BaseModel):
@@ -161,6 +165,7 @@ class ProductCreate(BaseModel):
     sku: Optional[str] = None
     unit_of_measure: Optional[str] = None
     category_id: Optional[int] = None
+    market_id: Optional[int] = None
 
 
 class ProductUpdate(BaseModel):
@@ -168,6 +173,7 @@ class ProductUpdate(BaseModel):
     sku: Optional[str] = None
     unit_of_measure: Optional[str] = None
     category_id: Optional[int] = None
+    market_id: Optional[int] = None
     is_active: Optional[bool] = None
 
 
@@ -180,6 +186,9 @@ class ProductOut(BaseModel):
     unit_of_measure: Optional[str] = None
     category_id: Optional[int] = None
     category: Optional[CategoryOut] = None
+    market_id: Optional[int] = None
+    market: Optional[MarketOut] = None
+    market_name: Optional[str] = None
     image_url: Optional[str] = None
     is_active: bool
     created_at: datetime

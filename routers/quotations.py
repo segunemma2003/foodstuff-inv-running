@@ -22,6 +22,7 @@ from utils.email import (
     tpl_quotation_approved,
     tpl_quotation_rejected,
 )
+from utils.make_integration import send_document_to_make_from_s3
 
 router = APIRouter(prefix="/quotations", tags=["Quotations"])
 
@@ -101,6 +102,73 @@ def _notify_approvers(db: Session, quotation: models.Quotation, created_by_name:
     for approver in approvers:
         if approver.email:
             send_email_task.delay(approver.email, subject, html, text)
+
+
+def _build_invoice_from_quotation(
+    db: Session,
+    quotation: models.Quotation,
+    actor_user: models.User,
+) -> models.Invoice:
+    from datetime import timedelta
+    from utils.number_gen import next_invoice_number
+
+    if quotation.invoice:
+        return quotation.invoice
+    if quotation.status not in (models.QuotationStatus.approved, models.QuotationStatus.converted):
+        raise HTTPException(400, "Only approved quotations can be converted to invoices")
+
+    today = date.today()
+    due = None
+    if quotation.payment_term == "net_30":
+        due = today + timedelta(days=30)
+    elif quotation.payment_term == "net_60":
+        due = today + timedelta(days=60)
+    elif quotation.payment_term == "net_15":
+        due = today + timedelta(days=15)
+
+    invoice = models.Invoice(
+        invoice_number=next_invoice_number(db),
+        quotation_id=quotation.id,
+        customer_id=quotation.customer_id,
+        invoice_date=today,
+        payment_term=quotation.payment_term,
+        due_date=due,
+        delivery_type=quotation.delivery_type,
+        total_amount=quotation.total_amount,
+        notes=quotation.notes,
+        created_by=actor_user.id,
+        status=models.InvoiceStatus.active,
+    )
+    db.add(invoice)
+    db.flush()
+
+    for qi in quotation.items:
+        db.add(models.InvoiceItem(
+            invoice_id=invoice.id,
+            product_id=qi.product_id,
+            quantity=qi.quantity,
+            uom=qi.uom,
+            cost_price=qi.cost_price,
+            supply_markup_pct=qi.supply_markup_pct,
+            supply_markup_amount=qi.supply_markup_amount,
+            delivery_markup_pct=qi.delivery_markup_pct,
+            delivery_markup_amount=qi.delivery_markup_amount,
+            payment_term_markup_pct=qi.payment_term_markup_pct,
+            payment_term_markup_amount=qi.payment_term_markup_amount,
+            unit_price=qi.unit_price,
+            line_total=qi.line_total,
+        ))
+
+    quotation.status = models.QuotationStatus.converted
+    audit.log(
+        db,
+        models.AuditAction.convert,
+        models.AuditEntity.quotation,
+        quotation.id,
+        actor_user.id,
+        description=f"Converted {quotation.quotation_number} → {invoice.invoice_number}",
+    )
+    return invoice
 
 
 # ─── Endpoints ───────────────────────────────────────────────────────────────
@@ -285,8 +353,19 @@ def approve_quotation(
     q.approved_at = datetime.utcnow()
     audit.log(db, models.AuditAction.approve, models.AuditEntity.quotation, q.id,
                current_user.id, description=f"Approved quotation {q.quotation_number}")
+    invoice = _build_invoice_from_quotation(db, q, current_user)
     db.commit()
     db.refresh(q)
+    db.refresh(invoice)
+
+    if invoice.custom_pdf_s3_key:
+        send_document_to_make_from_s3(
+            doc_type="invoice",
+            document_number=invoice.invoice_number,
+            s3_key=invoice.custom_pdf_s3_key,
+            filename=f"{invoice.invoice_number}.pdf",
+            customer_name=invoice.customer.customer_name if invoice.customer else "",
+        )
 
     # Notify creator — queued
     creator = db.query(models.User).filter(models.User.id == q.created_by).first()
@@ -408,8 +487,6 @@ def convert_to_invoice(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_not_analyst),
 ):
-    from datetime import timedelta
-    from utils.number_gen import next_invoice_number
     from utils.tasks import send_email_task
     from utils.email import tpl_invoice_created
 
@@ -420,53 +497,7 @@ def convert_to_invoice(
         raise HTTPException(400, "Only approved quotations can be converted to invoices")
     if q.invoice:
         raise HTTPException(400, f"Invoice {q.invoice.invoice_number} already exists for this quotation")
-
-    today = date.today()
-    due = None
-    if q.payment_term == "net_30":
-        due = today + timedelta(days=30)
-    elif q.payment_term == "net_60":
-        due = today + timedelta(days=60)
-    elif q.payment_term == "net_15":
-        due = today + timedelta(days=15)
-
-    invoice = models.Invoice(
-        invoice_number=next_invoice_number(db),
-        quotation_id=q.id,
-        customer_id=q.customer_id,
-        invoice_date=today,
-        payment_term=q.payment_term,
-        due_date=due,
-        delivery_type=q.delivery_type,
-        total_amount=q.total_amount,
-        notes=q.notes,
-        created_by=current_user.id,
-        status=models.InvoiceStatus.active,
-    )
-    db.add(invoice)
-    db.flush()
-
-    for qi in q.items:
-        db.add(models.InvoiceItem(
-            invoice_id=invoice.id,
-            product_id=qi.product_id,
-            quantity=qi.quantity,
-            uom=qi.uom,
-            cost_price=qi.cost_price,
-            supply_markup_pct=qi.supply_markup_pct,
-            supply_markup_amount=qi.supply_markup_amount,
-            delivery_markup_pct=qi.delivery_markup_pct,
-            delivery_markup_amount=qi.delivery_markup_amount,
-            payment_term_markup_pct=qi.payment_term_markup_pct,
-            payment_term_markup_amount=qi.payment_term_markup_amount,
-            unit_price=qi.unit_price,
-            line_total=qi.line_total,
-        ))
-
-    q.status = models.QuotationStatus.converted
-    audit.log(db, models.AuditAction.convert, models.AuditEntity.quotation, q.id,
-               current_user.id,
-               description=f"Converted {q.quotation_number} → {invoice.invoice_number}")
+    invoice = _build_invoice_from_quotation(db, q, current_user)
     db.commit()
     db.refresh(invoice)
 

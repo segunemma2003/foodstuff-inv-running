@@ -3,7 +3,7 @@ from io import BytesIO
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -33,6 +33,9 @@ def _enrich(product: models.Product, db: Session) -> schemas.ProductOut:
     if cp:
         out.current_cost_price = float(cp.cost_price)
         out.cost_price_effective_date = cp.effective_date
+    out.market_id = product.category_id
+    out.market = out.category
+    out.market_name = out.category.name if out.category else None
     # Convert S3 key to a 1-hour presigned URL for display
     if product.image_url and not product.image_url.startswith("http"):
         try:
@@ -65,6 +68,20 @@ def create_category(
     db.commit()
     db.refresh(cat)
     return cat
+
+
+@router.get("/markets", response_model=List[schemas.MarketOut])
+def list_markets(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    return db.query(models.ProductCategory).all()
+
+
+@router.post("/markets", response_model=schemas.MarketOut, status_code=201)
+def create_market(
+    body: schemas.CategoryCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin_or_manager),
+):
+    return create_category(body=body, db=db, current_user=current_user)
 
 
 @router.put("/categories/{category_id}", response_model=schemas.CategoryOut)
@@ -103,6 +120,7 @@ def list_products(
     limit: int = 50,
     search: Optional[str] = None,
     category_id: Optional[int] = None,
+    market_id: Optional[int] = None,
     is_active: Optional[bool] = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
@@ -113,8 +131,9 @@ def list_products(
         q = q.filter(
             models.Product.product_name.ilike(term) | models.Product.sku.ilike(term)
         )
-    if category_id:
-        q = q.filter(models.Product.category_id == category_id)
+    selected_market = market_id or category_id
+    if selected_market:
+        q = q.filter(models.Product.category_id == selected_market)
     if is_active is not None:
         q = q.filter(models.Product.is_active == is_active)
     products = q.order_by(models.Product.product_name).offset(skip).limit(limit).all()
@@ -129,7 +148,11 @@ def create_product(
 ):
     if body.sku and db.query(models.Product).filter(models.Product.sku == body.sku).first():
         raise HTTPException(400, "SKU already exists")
-    product = models.Product(**body.model_dump())
+    payload = body.model_dump(exclude_none=True)
+    selected_market = payload.pop("market_id", None)
+    if selected_market is not None:
+        payload["category_id"] = selected_market
+    product = models.Product(**payload)
     db.add(product)
     db.flush()
     audit.log(db, models.AuditAction.create, models.AuditEntity.product, product.id,
@@ -161,8 +184,12 @@ def update_product(
     p = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not p:
         raise HTTPException(404, "Product not found")
-    old = {k: str(getattr(p, k)) for k in body.model_dump(exclude_none=True)}
-    for field, value in body.model_dump(exclude_none=True).items():
+    payload = body.model_dump(exclude_none=True)
+    selected_market = payload.pop("market_id", None)
+    if selected_market is not None:
+        payload["category_id"] = selected_market
+    old = {k: str(getattr(p, k)) for k in payload}
+    for field, value in payload.items():
         setattr(p, field, value)
     audit.log(db, models.AuditAction.update, models.AuditEntity.product, p.id,
                current_user.id, old_values=old, new_values=body.model_dump(exclude_none=True))
@@ -329,8 +356,8 @@ def download_template(_: models.User = Depends(get_current_user)):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Products"
-    ws.append(["product_name", "sku", "unit_of_measure", "category_name"])
-    ws.append(["Rice 50kg", "RICE-50KG", "Bag", "Grains"])
+    ws.append(["product_name", "sku", "unit_of_measure", "market_name"])
+    ws.append(["Rice 50kg", "RICE-50KG", "Bag", "Abuja"])
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -344,13 +371,14 @@ def download_template(_: models.User = Depends(get_current_user)):
 @router.post("/bulk-upload", response_model=schemas.JobEnqueuedResponse, status_code=202)
 async def bulk_upload_products(
     file: UploadFile = File(...),
+    market_id: Optional[int] = Form(default=None),
     current_user: models.User = Depends(require_not_analyst),
 ):
     """
     Upload an Excel file to S3 and queue parsing via Celery.
     Returns a task_id immediately (< 50 ms). Poll /api/v1/jobs/{task_id} for result.
 
-    Expected columns: product_name, sku (optional), unit_of_measure (optional), category_name (optional)
+    Expected columns: product_name, sku (optional), unit_of_measure (optional), market_name (required unless market_id is provided)
     """
     import uuid
     from utils.s3 import upload_bytes
@@ -360,7 +388,7 @@ async def bulk_upload_products(
     s3_key = f"uploads/{uuid.uuid4()}.xlsx"
     upload_bytes(s3_key, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    task = process_product_bulk_task.delay(s3_key, current_user.id)
+    task = process_product_bulk_task.delay(s3_key, current_user.id, market_id)
     return schemas.JobEnqueuedResponse(
         task_id=task.id,
         message=f"Bulk upload queued. Poll /api/v1/jobs/{task.id} for result.",

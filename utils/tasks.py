@@ -16,7 +16,11 @@ Task categories
   Bulk upload  → process_cost_price_bulk_task, process_product_bulk_task
 """
 from celery_app import celery_app
+import os
 from utils.email import send_email
+from utils.make_integration import send_document_to_make_from_s3
+
+INVOICE_PRIMARY_RECIPIENT = os.getenv("INVOICE_PRIMARY_RECIPIENT_EMAIL", "foodstuffstoreinvoices@gmail.com")
 
 
 # ─── Email ────────────────────────────────────────────────────────────────────
@@ -48,6 +52,13 @@ def generate_quotation_pdf_task(self, quotation_id: int):
         pdf_bytes = generate_quotation_pdf(q)
         s3_key = f"jobs/{self.request.id}.pdf"
         upload_bytes(s3_key, pdf_bytes, "application/pdf")
+        send_document_to_make_from_s3(
+            doc_type="quotation",
+            document_number=q.quotation_number,
+            s3_key=s3_key,
+            filename=f"{q.quotation_number}.pdf",
+            customer_name=q.customer.customer_name if q.customer else "",
+        )
         return {
             "s3_key": s3_key,
             "filename": f"{q.quotation_number}.pdf",
@@ -73,6 +84,13 @@ def generate_invoice_pdf_task(self, invoice_id: int):
         pdf_bytes = generate_invoice_pdf(inv)
         s3_key = f"jobs/{self.request.id}.pdf"
         upload_bytes(s3_key, pdf_bytes, "application/pdf")
+        send_document_to_make_from_s3(
+            doc_type="invoice",
+            document_number=inv.invoice_number,
+            s3_key=s3_key,
+            filename=f"{inv.invoice_number}.pdf",
+            customer_name=inv.customer.customer_name if inv.customer else "",
+        )
         return {
             "s3_key": s3_key,
             "filename": f"{inv.invoice_number}.pdf",
@@ -140,13 +158,15 @@ def send_quotation_to_customer_task(self, quotation_id: int):
             q.customer.customer_name,
             float(q.total_amount),
         )
-        send_email(
-            to=customer_email,
-            subject=subject,
-            html=html,
-            text=text,
-            attachments=[(f"{q.quotation_number}.pdf", pdf_bytes, "application/pdf")],
-        )
+        recipients = list(dict.fromkeys([customer_email, INVOICE_PRIMARY_RECIPIENT]))
+        for recipient in recipients:
+            send_email(
+                to=recipient,
+                subject=subject,
+                html=html,
+                text=text,
+                attachments=[(f"{q.quotation_number}.pdf", pdf_bytes, "application/pdf")],
+            )
     except Exception as exc:
         raise self.retry(exc=exc)
     finally:
@@ -223,7 +243,7 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
 
 
 @celery_app.task(bind=True, name="process_product_bulk")
-def process_product_bulk_task(self, s3_key: str, user_id: int):
+def process_product_bulk_task(self, s3_key: str, user_id: int, market_id: int | None = None):
     """Download an Excel file from S3, parse and insert product records."""
     from io import BytesIO
     from database import SessionLocal
@@ -251,19 +271,22 @@ def process_product_bulk_task(self, s3_key: str, user_id: int):
             if sku and db.query(models.Product).filter(models.Product.sku == sku).first():
                 errors.append(f"Row {row_num}: SKU '{sku}' already exists")
                 continue
-            category_name = data.get("category_name") or data.get("category")
-            category_id = None
-            if category_name:
+            market_name = data.get("market_name") or data.get("market") or data.get("category_name") or data.get("category")
+            resolved_market_id = market_id
+            if resolved_market_id is None and market_name:
                 cat = db.query(models.ProductCategory).filter(
-                    models.ProductCategory.name == category_name
+                    models.ProductCategory.name == market_name
                 ).first()
                 if cat:
-                    category_id = cat.id
+                    resolved_market_id = cat.id
+            if resolved_market_id is None:
+                errors.append(f"Row {row_num}: market is required and must exist")
+                continue
             db.add(models.Product(
                 product_name=name,
                 sku=sku,
                 unit_of_measure=data.get("unit_of_measure"),
-                category_id=category_id,
+                category_id=resolved_market_id,
             ))
             created += 1
 

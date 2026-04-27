@@ -1,5 +1,6 @@
 from typing import Optional
 from datetime import date, timedelta, datetime
+import os
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, EmailStr
@@ -12,6 +13,7 @@ import models
 import schemas
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+COST_OF_SALES_PRIMARY_RECIPIENT = os.getenv("COST_OF_SALES_RECIPIENT_EMAIL", "foodstuffstorepo@gmail.com")
 
 
 def _sales_in_range(db: Session, start: date, end: date) -> float:
@@ -197,7 +199,6 @@ def overview(
 # ── Cost of Sales detail ──────────────────────────────────────────────────────
 
 class CostOfSalesEmailRequest(BaseModel):
-    to: str
     date_from:   Optional[date] = None
     date_to:     Optional[date] = None
     customer_id: Optional[int]  = None
@@ -331,7 +332,10 @@ def email_cost_of_sales_report(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    from utils.tasks import send_email_task
+    from utils.email import send_email
+    from utils.pdf_generator import generate_cost_of_sales_pdf
+    from utils.make_integration import send_document_to_make_from_s3
+    from utils.s3 import upload_bytes
 
     data = cost_of_sales_detail(
         date_from=body.date_from,
@@ -404,10 +408,52 @@ def email_cost_of_sales_report(
         f"Gross Profit:  ₦{s['gross_profit']:,.2f}\n"
         f"Gross Margin:  {s['gross_margin_pct']:.1f}%\n"
     )
-    send_email_task.delay(
-        to=body.to,
+    pdf_bytes = generate_cost_of_sales_pdf(data, title_suffix=date_label)
+    send_email(
+        to=COST_OF_SALES_PRIMARY_RECIPIENT,
         subject=f"Cost of Sales Report{date_label} — Foodstuff Store",
         html=html,
         text=text,
+        attachments=[("cost_of_sales.pdf", pdf_bytes, "application/pdf")],
     )
-    return {"message": f"Report sent to {body.to}"}
+    s3_key = f"reports/cost_of_sales/{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
+    upload_bytes(s3_key, pdf_bytes, "application/pdf")
+    send_document_to_make_from_s3(
+        doc_type="cost_of_sales",
+        document_number=f"COS-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+        s3_key=s3_key,
+        filename="cost_of_sales.pdf",
+    )
+    return {"message": f"Report sent to {COST_OF_SALES_PRIMARY_RECIPIENT}"}
+
+
+@router.get("/cost-of-sales/pdf")
+def download_cost_of_sales_pdf(
+    date_from:   Optional[date] = None,
+    date_to:     Optional[date] = None,
+    customer_id: Optional[int]  = None,
+    product_id:  Optional[int]  = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from utils.pdf_generator import generate_cost_of_sales_pdf
+
+    data = cost_of_sales_detail(
+        date_from=date_from,
+        date_to=date_to,
+        customer_id=customer_id,
+        product_id=product_id,
+        db=db,
+        _=current_user,
+    )
+    label = ""
+    if date_from or date_to:
+        label = f" ({date_from or 'start'} to {date_to or 'end'})"
+    pdf_bytes = generate_cost_of_sales_pdf(data, title_suffix=label)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="cost_of_sales.pdf"'},
+    )
