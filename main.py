@@ -144,13 +144,18 @@ _cors_origins_env = os.getenv("ALLOWED_ORIGINS", "")
 _cors_origins = (
     [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
     if _cors_origins_env
-    else ["*"]
+    else [
+        "https://invoicing.foodstuff.store",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
 )
+_allow_credentials = "*" not in _cors_origins
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=True,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
