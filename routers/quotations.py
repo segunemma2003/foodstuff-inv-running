@@ -1,8 +1,10 @@
 from typing import List, Optional
 from datetime import date, datetime
 from decimal import Decimal
+import os
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -24,6 +26,11 @@ from utils.email import (
 )
 
 router = APIRouter(prefix="/quotations", tags=["Quotations"])
+INVOICE_PRIMARY_RECIPIENT = os.getenv("INVOICE_PRIMARY_RECIPIENT_EMAIL", "foodstuffstoreinvoices@gmail.com")
+
+
+class QuotationUploadToMakeRequest(BaseModel):
+    additional_emails: Optional[List[str]] = None
 
 
 # ─── Internal helpers ────────────────────────────────────────────────────────
@@ -444,6 +451,42 @@ def send_quotation_to_customer(
     return schemas.MessageResponse(
         message=f"Quotation {q.quotation_number} queued for delivery to {q.customer.email}"
     )
+
+
+@router.post("/{quotation_id}/upload-to-make", response_model=schemas.MessageResponse)
+def upload_quotation_to_make(
+    quotation_id: int,
+    body: QuotationUploadToMakeRequest,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_not_analyst),
+):
+    from utils.email import send_email
+    from utils.pdf_generator import generate_quotation_pdf as gen_pdf
+
+    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not q:
+        raise HTTPException(404, "Quotation not found")
+    if q.status == models.QuotationStatus.draft:
+        raise HTTPException(400, "Submit the quotation before sending it")
+
+    pdf_bytes = gen_pdf(q)
+    recipients: List[str] = [INVOICE_PRIMARY_RECIPIENT]
+    if body.additional_emails:
+        recipients.extend([e.strip() for e in body.additional_emails if e and e.strip()])
+    recipients = list(dict.fromkeys(recipients))
+    if not recipients:
+        raise HTTPException(400, "No email addresses to send to")
+
+    for email in recipients:
+        send_email(
+            to=email,
+            subject=f"Quotation {q.quotation_number}",
+            html=f"<p>Please find attached quotation <strong>{q.quotation_number}</strong>.</p>",
+            text=f"Please find attached quotation {q.quotation_number}.",
+            attachments=[(f"{q.quotation_number}.pdf", pdf_bytes, "application/pdf")],
+        )
+
+    return schemas.MessageResponse(message=f"Quotation sent to {len(recipients)} recipient(s)")
 
 
 @router.post("/{quotation_id}/generate-pdf", response_model=schemas.JobEnqueuedResponse,

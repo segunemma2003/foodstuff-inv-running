@@ -2,7 +2,7 @@ from typing import List, Optional
 from datetime import date
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -354,12 +354,14 @@ def download_invoice_pdf(
 async def upload_invoice_pdf(
     invoice_id: int,
     file: UploadFile = File(...),
+    additional_emails: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    """Upload a custom PDF for this invoice. Replaces any previously uploaded PDF."""
+    """Upload custom PDF, send to primary/additional recipients, and store for reuse."""
     import uuid
     from utils.s3 import upload_bytes, delete_object
+    from utils.email import send_email
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only PDF files are accepted")
@@ -386,6 +388,19 @@ async def upload_invoice_pdf(
         filename=f"{inv.invoice_number}.pdf",
         customer_name=inv.customer.customer_name if inv.customer else "",
     )
+
+    recipients: List[str] = [INVOICE_PRIMARY_RECIPIENT]
+    if additional_emails:
+        recipients.extend([e.strip() for e in additional_emails.split(",") if e.strip()])
+    recipients = list(dict.fromkeys(recipients))
+    for recipient in recipients:
+        send_email(
+            to=recipient,
+            subject=f"Invoice {inv.invoice_number}",
+            html=f"<p>Please find attached invoice <strong>{inv.invoice_number}</strong>.</p>",
+            text=f"Please find attached invoice {inv.invoice_number}.",
+            attachments=[(f"{inv.invoice_number}.pdf", content, "application/pdf")],
+        )
     return inv
 
 

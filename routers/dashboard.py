@@ -203,6 +203,7 @@ class CostOfSalesEmailRequest(BaseModel):
     date_to:     Optional[date] = None
     customer_id: Optional[int]  = None
     product_id:  Optional[int]  = None
+    additional_emails: Optional[list[EmailStr]] = None
 
 
 @router.get("/cost-of-sales")
@@ -407,14 +408,20 @@ def email_cost_of_sales_report(
         f"Gross Margin:  {s['gross_margin_pct']:.1f}%\n"
     )
     pdf_bytes = generate_cost_of_sales_pdf(data, title_suffix=date_label)
-    send_email(
-        to=COST_OF_SALES_PRIMARY_RECIPIENT,
-        subject=f"Cost of Sales Report{date_label} — Foodstuff Store",
-        html=html,
-        text=text,
-        attachments=[("cost_of_sales.pdf", pdf_bytes, "application/pdf")],
-    )
-    return {"message": f"Report sent to {COST_OF_SALES_PRIMARY_RECIPIENT}"}
+    recipients: list[str] = [COST_OF_SALES_PRIMARY_RECIPIENT]
+    if body.additional_emails:
+        recipients.extend([str(e).strip() for e in body.additional_emails if str(e).strip()])
+    recipients = list(dict.fromkeys(recipients))
+
+    for recipient in recipients:
+        send_email(
+            to=recipient,
+            subject=f"Cost of Sales Report{date_label} — Foodstuff Store",
+            html=html,
+            text=text,
+            attachments=[("cost_of_sales.pdf", pdf_bytes, "application/pdf")],
+        )
+    return {"message": f"Report sent to {len(recipients)} recipient(s)"}
 
 
 @router.get("/cost-of-sales/pdf")
