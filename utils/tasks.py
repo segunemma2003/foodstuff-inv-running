@@ -20,7 +20,7 @@ import os
 from sqlalchemy import func
 from utils.email import send_email
 
-INVOICE_PRIMARY_RECIPIENT = os.getenv("INVOICE_PRIMARY_RECIPIENT_EMAIL", "foodstuffstoreinvoices@gmail.com")
+INVOICE_PRIMARY_RECIPIENT = "foodstuffstoreinvoices@gmail.com"
 
 
 # ─── Email ────────────────────────────────────────────────────────────────────

@@ -1,6 +1,5 @@
 from typing import List, Optional
 from datetime import date
-import os
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
@@ -19,7 +18,7 @@ class InvoiceSendEmailRequest(BaseModel):
     additional_emails: Optional[List[str]] = None
 
 router = APIRouter(prefix="/invoices", tags=["Invoices"])
-INVOICE_PRIMARY_RECIPIENT = os.getenv("INVOICE_PRIMARY_RECIPIENT_EMAIL", "foodstuffstoreinvoices@gmail.com")
+INVOICE_PRIMARY_RECIPIENT = "foodstuffstoreinvoices@gmail.com"
 
 
 @router.get("/approved-quotations", response_model=List[schemas.QuotationOut])

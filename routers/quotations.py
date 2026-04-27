@@ -1,7 +1,6 @@
 from typing import List, Optional
 from datetime import date, datetime
 from decimal import Decimal
-import os
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -26,7 +25,7 @@ from utils.email import (
 )
 
 router = APIRouter(prefix="/quotations", tags=["Quotations"])
-INVOICE_PRIMARY_RECIPIENT = os.getenv("INVOICE_PRIMARY_RECIPIENT_EMAIL", "foodstuffstoreinvoices@gmail.com")
+INVOICE_PRIMARY_RECIPIENT = "foodstuffstoreinvoices@gmail.com"
 
 
 class QuotationUploadToMakeRequest(BaseModel):
