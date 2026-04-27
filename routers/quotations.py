@@ -22,7 +22,6 @@ from utils.email import (
     tpl_quotation_approved,
     tpl_quotation_rejected,
 )
-from utils.make_integration import send_document_to_make_from_s3
 
 router = APIRouter(prefix="/quotations", tags=["Quotations"])
 
@@ -357,15 +356,6 @@ def approve_quotation(
     db.commit()
     db.refresh(q)
     db.refresh(invoice)
-
-    if invoice.custom_pdf_s3_key:
-        send_document_to_make_from_s3(
-            doc_type="invoice",
-            document_number=invoice.invoice_number,
-            s3_key=invoice.custom_pdf_s3_key,
-            filename=f"{invoice.invoice_number}.pdf",
-            customer_name=invoice.customer.customer_name if invoice.customer else "",
-        )
 
     # Notify creator — queued
     creator = db.query(models.User).filter(models.User.id == q.created_by).first()

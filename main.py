@@ -108,6 +108,8 @@ def run_migrations():
             conn.execute(text(
                 "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS custom_pdf_s3_key VARCHAR(255)"
             ))
+            conn.execute(text("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'accountant'"))
+            conn.execute(text("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'operations'"))
         conn.commit()
 
 

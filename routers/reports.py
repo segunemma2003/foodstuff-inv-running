@@ -15,12 +15,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import get_current_user
+from dependencies import require_roles
 import models
 import schemas
 from utils.tasks import generate_report_task
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
+require_report_roles = require_roles("admin", "manager", "analyst", "sales")
 
 
 def _enqueue(report_type: str, params: dict) -> schemas.JobEnqueuedResponse:
@@ -39,7 +40,7 @@ def sales_report(
     customer_id: Optional[int] = None,
     payment_term: Optional[str] = None,
     delivery_type: Optional[str] = None,
-    _: models.User = Depends(get_current_user),
+    _: models.User = Depends(require_report_roles),
 ):
     return _enqueue("sales", {
         "date_from": str(date_from) if date_from else None,
@@ -54,7 +55,7 @@ def sales_report(
 def invoice_report(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    _: models.User = Depends(get_current_user),
+    _: models.User = Depends(require_report_roles),
 ):
     return _enqueue("invoices", {
         "date_from": str(date_from) if date_from else None,
@@ -67,7 +68,7 @@ def quotation_report(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     status: Optional[str] = None,
-    _: models.User = Depends(get_current_user),
+    _: models.User = Depends(require_report_roles),
 ):
     return _enqueue("quotations", {
         "date_from": str(date_from) if date_from else None,
@@ -80,7 +81,7 @@ def quotation_report(
 def customer_sales_report(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    _: models.User = Depends(get_current_user),
+    _: models.User = Depends(require_report_roles),
 ):
     return _enqueue("customer_sales", {
         "date_from": str(date_from) if date_from else None,
@@ -92,7 +93,7 @@ def customer_sales_report(
 def product_sales_report(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    _: models.User = Depends(get_current_user),
+    _: models.User = Depends(require_report_roles),
 ):
     return _enqueue("product_sales", {
         "date_from": str(date_from) if date_from else None,
@@ -104,7 +105,7 @@ def product_sales_report(
 def cost_price_history_report(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    _: models.User = Depends(get_current_user),
+    _: models.User = Depends(require_report_roles),
 ):
     return _enqueue("cost_price_history", {
         "date_from": str(date_from) if date_from else None,
@@ -116,7 +117,7 @@ def cost_price_history_report(
 def staff_performance_report(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    _: models.User = Depends(get_current_user),
+    _: models.User = Depends(require_report_roles),
 ):
     return _enqueue("staff_performance", {
         "date_from": str(date_from) if date_from else None,

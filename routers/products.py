@@ -9,7 +9,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from database import get_db
-from dependencies import get_current_user, require_not_analyst, require_admin_or_manager
+from dependencies import (
+    get_current_user,
+    require_not_analyst,
+    require_admin_or_manager,
+    require_market_view_roles,
+    require_market_manage_roles,
+    require_product_upload_roles,
+)
 import models
 import schemas
 from utils import audit
@@ -51,7 +58,7 @@ def _enrich(product: models.Product, db: Session) -> schemas.ProductOut:
 
 
 @router.get("/categories", response_model=List[schemas.CategoryOut])
-def list_categories(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def list_categories(db: Session = Depends(get_db), _: models.User = Depends(require_market_view_roles)):
     return db.query(models.ProductCategory).all()
 
 
@@ -59,7 +66,7 @@ def list_categories(db: Session = Depends(get_db), _: models.User = Depends(get_
 def create_category(
     body: schemas.CategoryCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin_or_manager),
+    current_user: models.User = Depends(require_market_manage_roles),
 ):
     if db.query(models.ProductCategory).filter(models.ProductCategory.name == body.name).first():
         raise HTTPException(400, "Category already exists")
@@ -71,7 +78,7 @@ def create_category(
 
 
 @router.get("/markets", response_model=List[schemas.MarketOut])
-def list_markets(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def list_markets(db: Session = Depends(get_db), _: models.User = Depends(require_market_view_roles)):
     return db.query(models.ProductCategory).all()
 
 
@@ -79,9 +86,45 @@ def list_markets(db: Session = Depends(get_db), _: models.User = Depends(get_cur
 def create_market(
     body: schemas.CategoryCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin_or_manager),
+    current_user: models.User = Depends(require_market_manage_roles),
 ):
-    return create_category(body=body, db=db, current_user=current_user)
+    if db.query(models.ProductCategory).filter(models.ProductCategory.name == body.name).first():
+        raise HTTPException(400, "Market already exists")
+    market = models.ProductCategory(**body.model_dump())
+    db.add(market)
+    db.commit()
+    db.refresh(market)
+    return market
+
+
+@router.put("/markets/{market_id}", response_model=schemas.MarketOut)
+def update_market(
+    market_id: int,
+    body: schemas.CategoryUpdate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_market_manage_roles),
+):
+    market = db.query(models.ProductCategory).filter(models.ProductCategory.id == market_id).first()
+    if not market:
+        raise HTTPException(404, "Market not found")
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(market, k, v)
+    db.commit()
+    db.refresh(market)
+    return market
+
+
+@router.delete("/markets/{market_id}", status_code=204)
+def delete_market(
+    market_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_market_manage_roles),
+):
+    market = db.query(models.ProductCategory).filter(models.ProductCategory.id == market_id).first()
+    if not market:
+        raise HTTPException(404, "Market not found")
+    db.delete(market)
+    db.commit()
 
 
 @router.put("/categories/{category_id}", response_model=schemas.CategoryOut)
@@ -372,7 +415,7 @@ def download_template(_: models.User = Depends(get_current_user)):
 async def bulk_upload_products(
     file: UploadFile = File(...),
     market_id: Optional[int] = Form(default=None),
-    current_user: models.User = Depends(require_not_analyst),
+    current_user: models.User = Depends(require_product_upload_roles),
 ):
     """
     Upload an Excel file to S3 and queue parsing via Celery.

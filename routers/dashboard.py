@@ -334,8 +334,6 @@ def email_cost_of_sales_report(
 ):
     from utils.email import send_email
     from utils.pdf_generator import generate_cost_of_sales_pdf
-    from utils.make_integration import send_document_to_make_from_s3
-    from utils.s3 import upload_bytes
 
     data = cost_of_sales_detail(
         date_from=body.date_from,
@@ -415,14 +413,6 @@ def email_cost_of_sales_report(
         html=html,
         text=text,
         attachments=[("cost_of_sales.pdf", pdf_bytes, "application/pdf")],
-    )
-    s3_key = f"reports/cost_of_sales/{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
-    upload_bytes(s3_key, pdf_bytes, "application/pdf")
-    send_document_to_make_from_s3(
-        doc_type="cost_of_sales",
-        document_number=f"COS-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
-        s3_key=s3_key,
-        filename="cost_of_sales.pdf",
     )
     return {"message": f"Report sent to {COST_OF_SALES_PRIMARY_RECIPIENT}"}
 

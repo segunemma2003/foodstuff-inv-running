@@ -18,7 +18,6 @@ Task categories
 from celery_app import celery_app
 import os
 from utils.email import send_email
-from utils.make_integration import send_document_to_make_from_s3
 
 INVOICE_PRIMARY_RECIPIENT = os.getenv("INVOICE_PRIMARY_RECIPIENT_EMAIL", "foodstuffstoreinvoices@gmail.com")
 
@@ -52,13 +51,6 @@ def generate_quotation_pdf_task(self, quotation_id: int):
         pdf_bytes = generate_quotation_pdf(q)
         s3_key = f"jobs/{self.request.id}.pdf"
         upload_bytes(s3_key, pdf_bytes, "application/pdf")
-        send_document_to_make_from_s3(
-            doc_type="quotation",
-            document_number=q.quotation_number,
-            s3_key=s3_key,
-            filename=f"{q.quotation_number}.pdf",
-            customer_name=q.customer.customer_name if q.customer else "",
-        )
         return {
             "s3_key": s3_key,
             "filename": f"{q.quotation_number}.pdf",
@@ -84,13 +76,6 @@ def generate_invoice_pdf_task(self, invoice_id: int):
         pdf_bytes = generate_invoice_pdf(inv)
         s3_key = f"jobs/{self.request.id}.pdf"
         upload_bytes(s3_key, pdf_bytes, "application/pdf")
-        send_document_to_make_from_s3(
-            doc_type="invoice",
-            document_number=inv.invoice_number,
-            s3_key=s3_key,
-            filename=f"{inv.invoice_number}.pdf",
-            customer_name=inv.customer.customer_name if inv.customer else "",
-        )
         return {
             "s3_key": s3_key,
             "filename": f"{inv.invoice_number}.pdf",

@@ -18,6 +18,8 @@ class UserRole(str, enum.Enum):
     manager = "manager"
     sales = "sales"
     analyst = "analyst"
+    accountant = "accountant"
+    operations = "operations"
 
 
 class DeliveryType(str, enum.Enum):

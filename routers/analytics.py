@@ -39,6 +39,7 @@ def sales_analytics(
     customer_id: Optional[int] = None,
     product_id: Optional[int] = None,
     category_id: Optional[int] = None,
+    market_id: Optional[int] = None,
     delivery_type: Optional[str] = None,
     payment_term: Optional[str] = None,
     staff_id: Optional[int] = None,
@@ -89,8 +90,9 @@ def sales_analytics(
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
     )
     tp_q = _inv_filters(tp_q, date_from, date_to, delivery_type, payment_term, staff_id, customer_id)
-    if category_id:
-        tp_q = tp_q.filter(models.Product.category_id == category_id)
+    selected_market = market_id or category_id
+    if selected_market:
+        tp_q = tp_q.filter(models.Product.category_id == selected_market)
     if product_id:
         tp_q = tp_q.filter(models.Product.id == product_id)
     top_prod = (
@@ -192,7 +194,13 @@ def sales_analytics(
             for r in top_prod
         ],
         top_categories=[
-            {"category_id": r.id, "category_name": r.name, "total": float(r.total)}
+            {
+                "category_id": r.id,
+                "category_name": r.name,
+                "market_id": r.id,
+                "market_name": r.name,
+                "total": float(r.total),
+            }
             for r in top_cat
         ],
         sales_by_delivery_type={r.delivery_type.value: float(r.t or 0) for r in dt_rows},
@@ -332,6 +340,7 @@ def product_sales_analytics(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     category_id: Optional[int] = None,
+    market_id: Optional[int] = None,
     delivery_type: Optional[str] = None,
     payment_term: Optional[str] = None,
     limit: int = 50,
@@ -355,8 +364,9 @@ def product_sales_analytics(
         q = q.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
         q = q.filter(models.Invoice.invoice_date <= date_to)
-    if category_id:
-        q = q.filter(models.Product.category_id == category_id)
+    selected_market = market_id or category_id
+    if selected_market:
+        q = q.filter(models.Product.category_id == selected_market)
     if delivery_type:
         q = q.filter(models.Invoice.delivery_type == delivery_type)
     if payment_term:
