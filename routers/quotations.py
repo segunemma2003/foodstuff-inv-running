@@ -1,6 +1,7 @@
 from typing import List, Optional
 from datetime import date, datetime
 from decimal import Decimal
+import base64
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -17,6 +18,7 @@ from utils.tasks import (
     generate_quotation_pdf_task,
     send_email_task,
     send_quotation_to_customer_task,
+    send_email_with_attachment_task,
 )
 from utils.queue_events import log_queue_event
 from utils.email import (
@@ -468,7 +470,6 @@ def upload_quotation_to_make(
     db: Session = Depends(get_db),
     _: models.User = Depends(require_not_analyst),
 ):
-    from utils.email import send_email
     from utils.pdf_generator import generate_quotation_pdf as gen_pdf
 
     q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
@@ -485,16 +486,25 @@ def upload_quotation_to_make(
     if not recipients:
         raise HTTPException(400, "No email addresses to send to")
 
-    for email in recipients:
-        send_email(
-            to=email,
-            subject=f"Quotation {q.quotation_number}",
-            html=f"<p>Please find attached quotation <strong>{q.quotation_number}</strong>.</p>",
-            text=f"Please find attached quotation {q.quotation_number}.",
-            attachments=[(f"{q.quotation_number}.pdf", pdf_bytes, "application/pdf")],
-        )
+    task = send_email_with_attachment_task.delay(
+        recipients,
+        f"Quotation {q.quotation_number}",
+        f"<p>Please find attached quotation <strong>{q.quotation_number}</strong>.</p>",
+        f"Please find attached quotation {q.quotation_number}.",
+        f"{q.quotation_number}.pdf",
+        "application/pdf",
+        base64.b64encode(pdf_bytes).decode("utf-8"),
+    )
+    log_queue_event(
+        db,
+        task_id=task.id,
+        event_type="quotation_upload_to_make",
+        title=f"Upload quotation to make {q.quotation_number}",
+        requested_by=_.id if _ else None,
+        metadata={"quotation_id": q.id, "recipients": recipients},
+    )
 
-    return schemas.MessageResponse(message=f"Quotation sent to {len(recipients)} recipient(s)")
+    return schemas.MessageResponse(message=f"Quotation queued for {len(recipients)} recipient(s)")
 
 
 @router.post("/{quotation_id}/generate-pdf", response_model=schemas.JobEnqueuedResponse,

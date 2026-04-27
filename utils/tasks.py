@@ -19,6 +19,7 @@ from celery_app import celery_app
 import os
 from sqlalchemy import func
 from utils.email import send_email
+import base64
 
 INVOICE_PRIMARY_RECIPIENT = "foodstuffstoreinvoices@gmail.com"
 
@@ -30,6 +31,35 @@ def send_email_task(self, to: str, subject: str, html: str, text: str = ""):
     """Send a single email; retries up to 3 times on SMTP failure."""
     try:
         send_email(to, subject, html, text)
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+@celery_app.task(bind=True, name="send_email_with_attachment", max_retries=3, default_retry_delay=60)
+def send_email_with_attachment_task(
+    self,
+    recipients: list[str],
+    subject: str,
+    html: str,
+    text: str,
+    filename: str,
+    mime_type: str,
+    content_b64: str,
+):
+    """Send one attachment email to multiple recipients."""
+    try:
+        normalized = list(dict.fromkeys([e.strip() for e in recipients if e and e.strip()]))
+        if not normalized:
+            raise ValueError("No recipients provided")
+        content = base64.b64decode(content_b64.encode("utf-8"))
+        for recipient in normalized:
+            send_email(
+                to=recipient,
+                subject=subject,
+                html=html,
+                text=text,
+                attachments=[(filename, content, mime_type)],
+            )
     except Exception as exc:
         raise self.retry(exc=exc)
 

@@ -1,6 +1,7 @@
 from typing import Optional
 from datetime import date, timedelta, datetime
 import os
+import base64
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, EmailStr
@@ -13,6 +14,8 @@ from database import get_db
 from dependencies import get_current_user
 import models
 import schemas
+from utils.queue_events import log_queue_event
+from utils.tasks import send_email_with_attachment_task
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 COST_OF_SALES_PRIMARY_RECIPIENT = os.getenv("COST_OF_SALES_RECIPIENT_EMAIL", "foodstuffstorepo@gmail.com")
@@ -335,7 +338,6 @@ def email_cost_of_sales_report(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    from utils.email import send_email
     from utils.pdf_generator import generate_cost_of_sales_pdf
 
     data = cost_of_sales_detail(
@@ -415,15 +417,24 @@ def email_cost_of_sales_report(
         recipients.extend([str(e).strip() for e in body.additional_emails if str(e).strip()])
     recipients = list(dict.fromkeys(recipients))
 
-    for recipient in recipients:
-        send_email(
-            to=recipient,
-            subject=f"Cost of Sales Report{date_label} — Foodstuff Store",
-            html=html,
-            text=text,
-            attachments=[("cost_of_sales.pdf", pdf_bytes, "application/pdf")],
-        )
-    return {"message": f"Report sent to {len(recipients)} recipient(s)"}
+    task = send_email_with_attachment_task.delay(
+        recipients,
+        f"Cost of Sales Report{date_label} — Foodstuff Store",
+        html,
+        text,
+        "cost_of_sales.pdf",
+        "application/pdf",
+        base64.b64encode(pdf_bytes).decode("utf-8"),
+    )
+    log_queue_event(
+        db,
+        task_id=task.id,
+        event_type="cost_of_sales_email",
+        title=f"Send cost of sales report{date_label}",
+        requested_by=current_user.id if current_user else None,
+        metadata={"recipients": recipients, "customer_id": body.customer_id, "product_id": body.product_id},
+    )
+    return {"message": f"Report queued for {len(recipients)} recipient(s)"}
 
 
 @router.post("/cost-of-sales/upload-to-make")
