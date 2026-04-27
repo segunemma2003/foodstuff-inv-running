@@ -193,6 +193,16 @@ def sales_analytics(
              "total": float(r.total), "qty": float(r.qty)}
             for r in top_prod
         ],
+        top_markets=[
+            {
+                "category_id": r.id,
+                "category_name": r.name,
+                "market_id": r.id,
+                "market_name": r.name,
+                "total": float(r.total),
+            }
+            for r in top_cat
+        ],
         top_categories=[
             {
                 "category_id": r.id,

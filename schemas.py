@@ -455,6 +455,7 @@ class SalesAnalytics(BaseModel):
     average_invoice_value: float
     top_customers: List[dict]
     top_products: List[dict]
+    top_markets: List[dict] = []
     top_categories: List[dict]
     sales_by_delivery_type: dict
     sales_by_payment_term: dict
