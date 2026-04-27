@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract
+from celery.result import AsyncResult
+from celery_app import celery_app
 
 from database import get_db
 from dependencies import get_current_user
@@ -435,6 +437,29 @@ def upload_cost_of_sales_to_make(
     Uses the Cost of Sales recipient flow (primary + additional emails).
     """
     return email_cost_of_sales_report(body=body, db=db, current_user=current_user)
+
+
+@router.get("/queue-events", response_model=list[schemas.QueueEventOut])
+def list_queue_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    event_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    q = db.query(models.QueueEvent)
+    if event_type:
+        q = q.filter(models.QueueEvent.event_type == event_type)
+    events = q.order_by(models.QueueEvent.created_at.desc()).limit(limit).all()
+
+    out: list[schemas.QueueEventOut] = []
+    for event in events:
+        task = AsyncResult(event.task_id, app=celery_app)
+        item = schemas.QueueEventOut.model_validate(event).model_dump()
+        item["status"] = task.state
+        if task.state == "FAILURE":
+            item["error"] = str(task.info)
+        out.append(schemas.QueueEventOut(**item))
+    return out
 
 
 @router.get("/cost-of-sales/pdf")

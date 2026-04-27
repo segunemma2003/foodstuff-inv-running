@@ -18,6 +18,7 @@ from utils.tasks import (
     send_email_task,
     send_quotation_to_customer_task,
 )
+from utils.queue_events import log_queue_event
 from utils.email import (
     tpl_quotation_submitted,
     tpl_quotation_approved,
@@ -446,7 +447,15 @@ def send_quotation_to_customer(
     if not q.customer or not q.customer.email:
         raise HTTPException(400, "Customer has no email address on file")
 
-    send_quotation_to_customer_task.delay(quotation_id)
+    task = send_quotation_to_customer_task.delay(quotation_id)
+    log_queue_event(
+        db,
+        task_id=task.id,
+        event_type="quotation_email",
+        title=f"Send quotation email {q.quotation_number}",
+        requested_by=current_user.id if current_user else None,
+        metadata={"quotation_id": q.id, "customer_email": q.customer.email if q.customer else None},
+    )
     return schemas.MessageResponse(
         message=f"Quotation {q.quotation_number} queued for delivery to {q.customer.email}"
     )
@@ -506,6 +515,14 @@ def generate_quotation_pdf(
         raise HTTPException(400, "PDF is only available after the quotation is submitted")
 
     task = generate_quotation_pdf_task.delay(quotation_id)
+    log_queue_event(
+        db,
+        task_id=task.id,
+        event_type="quotation_pdf",
+        title=f"Generate quotation PDF {q.quotation_number}",
+        requested_by=_.id if _ else None,
+        metadata={"quotation_id": q.id},
+    )
     return schemas.JobEnqueuedResponse(
         task_id=task.id,
         message=f"PDF generation queued for {q.quotation_number}. "

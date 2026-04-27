@@ -10,8 +10,9 @@ from dependencies import get_current_user, require_admin_or_manager, require_not
 import models
 import schemas
 from utils import audit
-from utils.tasks import generate_invoice_pdf_task
+from utils.tasks import generate_invoice_pdf_task, send_invoice_to_recipients_task
 from utils.make_integration import send_document_to_make_from_s3
+from utils.queue_events import log_queue_event
 
 
 class InvoiceSendEmailRequest(BaseModel):
@@ -360,7 +361,6 @@ async def upload_invoice_pdf(
     """Upload custom PDF, send to primary/additional recipients, and store for reuse."""
     import uuid
     from utils.s3 import upload_bytes, delete_object
-    from utils.email import send_email
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only PDF files are accepted")
@@ -392,13 +392,15 @@ async def upload_invoice_pdf(
     if additional_emails:
         recipients.extend([e.strip() for e in additional_emails.split(",") if e.strip()])
     recipients = list(dict.fromkeys(recipients))
-    for recipient in recipients:
-        send_email(
-            to=recipient,
-            subject=f"Invoice {inv.invoice_number}",
-            html=f"<p>Please find attached invoice <strong>{inv.invoice_number}</strong>.</p>",
-            text=f"Please find attached invoice {inv.invoice_number}.",
-            attachments=[(f"{inv.invoice_number}.pdf", content, "application/pdf")],
+    if recipients:
+        task = send_invoice_to_recipients_task.delay(inv.id, recipients)
+        log_queue_event(
+            db,
+            task_id=task.id,
+            event_type="invoice_email",
+            title=f"Send invoice email {inv.invoice_number}",
+            requested_by=_.id if _ else None,
+            metadata={"invoice_id": inv.id, "recipients": recipients},
         )
     return inv
 
@@ -440,6 +442,14 @@ def generate_invoice_pdf(
         raise HTTPException(404, "Invoice not found")
 
     task = generate_invoice_pdf_task.delay(invoice_id)
+    log_queue_event(
+        db,
+        task_id=task.id,
+        event_type="invoice_pdf",
+        title=f"Generate invoice PDF {inv.invoice_number}",
+        requested_by=_.id if _ else None,
+        metadata={"invoice_id": inv.id},
+    )
     return schemas.JobEnqueuedResponse(
         task_id=task.id,
         message=f"PDF generation queued for {inv.invoice_number}. "
@@ -470,34 +480,18 @@ def send_invoice_email(
     if not emails:
         raise HTTPException(400, "No email addresses to send to")
 
-    from io import BytesIO
-    from utils.pdf_generator import generate_invoice_pdf as gen_pdf
-    from utils.email import send_email, tpl_invoice_to_customer
-
-    bank_accounts = (
-        db.query(models.PaymentAccount)
-        .filter(models.PaymentAccount.is_active == True)
-        .order_by(models.PaymentAccount.is_default.desc())
-        .all()
+    task = send_invoice_to_recipients_task.delay(inv.id, emails)
+    log_queue_event(
+        db,
+        task_id=task.id,
+        event_type="invoice_email",
+        title=f"Send invoice email {inv.invoice_number}",
+        requested_by=_.id if _ else None,
+        metadata={"invoice_id": inv.id, "recipients": emails},
     )
-    pdf_bytes = gen_pdf(inv, bank_accounts=bank_accounts)
-
-    customer_name = inv.customer.customer_name if inv.customer else "Customer"
-    for email in emails:
-        subject, html, text = tpl_invoice_to_customer(
-            invoice_number=inv.invoice_number,
-            customer_name=customer_name,
-            total=float(inv.total_amount),
-        )
-        send_email(
-            to=email,
-            subject=subject,
-            html=html,
-            text=text,
-            attachments=[(f"{inv.invoice_number}.pdf", pdf_bytes, "application/pdf")],
-        )
-
-    return schemas.MessageResponse(message=f"Invoice sent to {len(emails)} recipient(s)")
+    return schemas.MessageResponse(
+        message=f"Invoice email queued for {len(emails)} recipient(s)"
+    )
 
 
 @router.post("/{invoice_id}/upload-to-make", response_model=schemas.MessageResponse)
@@ -508,16 +502,11 @@ def upload_invoice_to_make(
     _: models.User = Depends(get_current_user),
 ):
     """Send the existing invoice PDF to primary and additional recipients."""
-    from utils.pdf_generator import generate_invoice_pdf as gen_pdf
-    from utils.email import send_email
-    from utils.s3 import download_bytes
-
     inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(404, "Invoice not found")
 
     if inv.custom_pdf_s3_key:
-        pdf_bytes = download_bytes(inv.custom_pdf_s3_key)
         send_document_to_make_from_s3(
             doc_type="invoice",
             document_number=inv.invoice_number,
@@ -525,14 +514,6 @@ def upload_invoice_to_make(
             filename=f"{inv.invoice_number}.pdf",
             customer_name=inv.customer.customer_name if inv.customer else "",
         )
-    else:
-        bank_accounts = (
-            db.query(models.PaymentAccount)
-            .filter(models.PaymentAccount.is_active == True)
-            .order_by(models.PaymentAccount.is_default.desc())
-            .all()
-        )
-        pdf_bytes = gen_pdf(inv, bank_accounts=bank_accounts)
 
     emails: List[str] = [INVOICE_PRIMARY_RECIPIENT]
     if body.additional_emails:
@@ -541,16 +522,18 @@ def upload_invoice_to_make(
     if not emails:
         raise HTTPException(400, "No email addresses to send to")
 
-    for email in emails:
-        send_email(
-            to=email,
-            subject=f"Invoice {inv.invoice_number}",
-            html=f"<p>Please find attached invoice <strong>{inv.invoice_number}</strong>.</p>",
-            text=f"Please find attached invoice {inv.invoice_number}.",
-            attachments=[(f"{inv.invoice_number}.pdf", pdf_bytes, "application/pdf")],
-        )
-
-    return schemas.MessageResponse(message=f"Invoice sent to {len(emails)} recipient(s)")
+    task = send_invoice_to_recipients_task.delay(inv.id, emails)
+    log_queue_event(
+        db,
+        task_id=task.id,
+        event_type="invoice_upload_to_make",
+        title=f"Upload invoice to make {inv.invoice_number}",
+        requested_by=_.id if _ else None,
+        metadata={"invoice_id": inv.id, "recipients": emails},
+    )
+    return schemas.MessageResponse(
+        message=f"Invoice upload-to-make queued for {len(emails)} recipient(s)"
+    )
 
 
 @router.post("/{invoice_id}/cancel", response_model=schemas.InvoiceOut)

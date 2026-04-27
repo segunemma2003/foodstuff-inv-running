@@ -625,6 +625,20 @@ class JobStatusResponse(BaseModel):
     error: Optional[str] = None
 
 
+class QueueEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    task_id: str
+    event_type: str
+    title: str
+    requested_by: Optional[int] = None
+    metadata_json: Optional[str] = None
+    created_at: datetime
+    status: Optional[str] = None
+    error: Optional[str] = None
+
+
 # ─── Settings ────────────────────────────────────────────────────────────────
 
 class SettingUpdate(BaseModel):

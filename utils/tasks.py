@@ -159,6 +159,58 @@ def send_quotation_to_customer_task(self, quotation_id: int):
         db.close()
 
 
+@celery_app.task(bind=True, name="send_invoice_to_recipients", max_retries=3, default_retry_delay=60)
+def send_invoice_to_recipients_task(self, invoice_id: int, recipients: list[str]):
+    """Generate/download invoice PDF and send to recipient list in background."""
+    from database import SessionLocal
+    import models
+    from utils.pdf_generator import generate_invoice_pdf
+    from utils.email import tpl_invoice_to_customer, SMTP_USER, SMTP_PASSWORD
+    from utils.s3 import download_bytes
+
+    db = SessionLocal()
+    try:
+        inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+        if inv is None:
+            raise ValueError(f"Invoice {invoice_id} not found")
+        if not SMTP_USER or not SMTP_PASSWORD:
+            raise ValueError("SMTP is not configured (SMTP_USER/SMTP_PASSWORD missing)")
+
+        normalized_recipients = list(dict.fromkeys([e.strip() for e in recipients if e and e.strip()]))
+        if not normalized_recipients:
+            raise ValueError("No recipients provided")
+
+        if inv.custom_pdf_s3_key:
+            pdf_bytes = download_bytes(inv.custom_pdf_s3_key)
+        else:
+            bank_accounts = (
+                db.query(models.PaymentAccount)
+                .filter(models.PaymentAccount.is_active == True)
+                .order_by(models.PaymentAccount.is_default.desc())
+                .all()
+            )
+            pdf_bytes = generate_invoice_pdf(inv, bank_accounts=bank_accounts)
+
+        customer_name = inv.customer.customer_name if inv.customer else "Customer"
+        subject, html, text = tpl_invoice_to_customer(
+            invoice_number=inv.invoice_number,
+            customer_name=customer_name,
+            total=float(inv.total_amount),
+        )
+        for recipient in normalized_recipients:
+            send_email(
+                to=recipient,
+                subject=subject,
+                html=html,
+                text=text,
+                attachments=[(f"{inv.invoice_number}.pdf", pdf_bytes, "application/pdf")],
+            )
+    except Exception as exc:
+        raise self.retry(exc=exc)
+    finally:
+        db.close()
+
+
 # ─── Bulk uploads ─────────────────────────────────────────────────────────────
 
 @celery_app.task(bind=True, name="process_cost_price_bulk")
