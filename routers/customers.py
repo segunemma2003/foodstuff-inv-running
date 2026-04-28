@@ -29,7 +29,7 @@ def list_customers(
             models.Invoice.customer_id.label("cid"),
             func.max(models.Invoice.invoice_date).label("last_date"),
         )
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
         .group_by(models.Invoice.customer_id)
         .subquery()
     )
@@ -173,7 +173,7 @@ def customer_analytics(
 
     base_filter = [
         models.Invoice.customer_id == customer_id,
-        models.Invoice.status == models.InvoiceStatus.active,
+        models.Invoice.status != models.InvoiceStatus.cancelled,
     ]
 
     # Aggregate invoice-level stats in one query
@@ -258,7 +258,7 @@ def customer_top_products(
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
         .filter(
             models.Invoice.customer_id == customer_id,
-            models.Invoice.status == models.InvoiceStatus.active,
+            models.Invoice.status != models.InvoiceStatus.cancelled,
         )
     )
     if date_from:
@@ -292,7 +292,7 @@ def customer_cost_of_sales(
 
     base_filter = [
         models.Invoice.customer_id == customer_id,
-        models.Invoice.status == models.InvoiceStatus.active,
+        models.Invoice.status != models.InvoiceStatus.cancelled,
     ]
     if date_from:
         base_filter.append(models.Invoice.invoice_date >= date_from)

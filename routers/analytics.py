@@ -16,7 +16,7 @@ router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 def _inv_filters(q, date_from, date_to, delivery_type=None, payment_term=None,
                  staff_id=None, customer_id=None):
-    q = q.filter(models.Invoice.status == models.InvoiceStatus.active)
+    q = q.filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     if date_from:
         q = q.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
@@ -182,7 +182,7 @@ def sales_analytics(
             func.count(models.Invoice.id).label("count"),
         )
         .filter(
-            models.Invoice.status == models.InvoiceStatus.active,
+            models.Invoice.status != models.InvoiceStatus.cancelled,
             models.Invoice.invoice_date >= daily_from,
             models.Invoice.invoice_date <= daily_to,
         )
@@ -198,7 +198,7 @@ def sales_analytics(
                 func.count(models.Invoice.id).label("count"),
             )
             .filter(
-                models.Invoice.status == models.InvoiceStatus.active,
+                models.Invoice.status != models.InvoiceStatus.cancelled,
                 models.Invoice.invoice_date >= daily_from,
                 models.Invoice.invoice_date <= daily_to,
                 models.Invoice.id.in_(market_invoice_ids),
@@ -214,7 +214,7 @@ def sales_analytics(
         extract("month", models.Invoice.invoice_date).label("month"),
         func.sum(models.Invoice.total_amount).label("total"),
         func.count(models.Invoice.id).label("count"),
-    ).filter(models.Invoice.status == models.InvoiceStatus.active)
+    ).filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     if date_from:
         mon_q = mon_q.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
@@ -308,7 +308,7 @@ def customer_behavior(
         db.query(models.Invoice)
         .filter(
             models.Invoice.customer_id.in_(cust_ids),
-            models.Invoice.status == models.InvoiceStatus.active,
+            models.Invoice.status != models.InvoiceStatus.cancelled,
         )
     )
     if market_invoice_ids is not None:
@@ -331,7 +331,7 @@ def customer_behavior(
         .join(models.Product, models.Product.id == models.InvoiceItem.product_id)
         .filter(
             models.Invoice.customer_id.in_(cust_ids),
-            models.Invoice.status == models.InvoiceStatus.active,
+            models.Invoice.status != models.InvoiceStatus.cancelled,
         )
     )
     if selected_market:
@@ -420,7 +420,7 @@ def product_sales_analytics(
         )
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     )
     if date_from:
         q = q.filter(models.Invoice.invoice_date >= date_from)
@@ -474,7 +474,7 @@ def staff_performance(
     for u in users:
         q_filter = [models.Quotation.created_by == u.id]
         i_filter = [models.Invoice.created_by == u.id,
-                    models.Invoice.status == models.InvoiceStatus.active]
+                    models.Invoice.status != models.InvoiceStatus.cancelled]
         if date_from:
             q_filter.append(models.Quotation.quotation_date >= date_from)
             i_filter.append(models.Invoice.invoice_date >= date_from)

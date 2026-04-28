@@ -426,6 +426,76 @@ def remove_invoice_pdf(
     return inv
 
 
+@router.post("/{invoice_id}/upload-signed", response_model=schemas.InvoiceOut)
+async def upload_signed_invoice(
+    invoice_id: int,
+    file: UploadFile = File(...),
+    additional_emails: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Upload signed invoice PDF, mark invoice completed, and dispatch to Make/email."""
+    import uuid
+    from utils.s3 import upload_bytes, delete_object
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files are accepted")
+
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+    if inv.status == models.InvoiceStatus.cancelled:
+        raise HTTPException(400, "Cancelled invoice cannot be completed")
+    if not inv.quotation_id:
+        raise HTTPException(400, "Signed upload is only available for converted invoices")
+
+    if inv.custom_pdf_s3_key:
+        delete_object(inv.custom_pdf_s3_key)
+
+    content = await file.read()
+    s3_key = f"invoices/{invoice_id}/signed_{uuid.uuid4()}.pdf"
+    upload_bytes(s3_key, content, "application/pdf")
+
+    inv.custom_pdf_s3_key = s3_key
+    inv.status = models.InvoiceStatus.completed
+    audit.log(
+        db,
+        models.AuditAction.update,
+        models.AuditEntity.invoice,
+        inv.id,
+        current_user.id if current_user else None,
+        description=f"Uploaded signed invoice for {inv.invoice_number} and marked completed",
+        new_values={"status": models.InvoiceStatus.completed.value, "signed_pdf_s3_key": s3_key},
+    )
+    db.commit()
+    db.refresh(inv)
+
+    send_document_to_make_from_s3(
+        doc_type="invoice",
+        document_number=inv.invoice_number,
+        s3_key=s3_key,
+        filename=f"{inv.invoice_number}.pdf",
+        customer_name=inv.customer.customer_name if inv.customer else "",
+    )
+
+    recipients: List[str] = [INVOICE_PRIMARY_RECIPIENT]
+    if additional_emails:
+        recipients.extend([e.strip() for e in additional_emails.split(",") if e.strip()])
+    recipients = list(dict.fromkeys(recipients))
+    if recipients:
+        task = send_invoice_to_recipients_task.delay(inv.id, recipients)
+        log_queue_event(
+            db,
+            task_id=task.id,
+            event_type="signed_invoice_upload",
+            title=f"Upload signed invoice {inv.invoice_number}",
+            requested_by=current_user.id if current_user else None,
+            metadata={"invoice_id": inv.id, "recipients": recipients},
+        )
+
+    return inv
+
+
 @router.post("/{invoice_id}/generate-pdf", response_model=schemas.JobEnqueuedResponse,
              status_code=202)
 def generate_invoice_pdf(

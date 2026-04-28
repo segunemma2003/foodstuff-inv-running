@@ -39,6 +39,7 @@ class InvoiceStatus(str, enum.Enum):
     active = "active"
     partially_paid = "partially_paid"
     paid = "paid"
+    completed = "completed"
     cancelled = "cancelled"
 
 

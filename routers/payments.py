@@ -59,8 +59,8 @@ def _recalculate_invoice_payment_status(invoice: models.Invoice, db: Session) ->
 
     invoice.amount_paid = total_confirmed
 
-    if invoice.status == models.InvoiceStatus.cancelled:
-        return  # Never auto-change a cancelled invoice's status
+    if invoice.status in (models.InvoiceStatus.cancelled, models.InvoiceStatus.completed):
+        return  # Never auto-change cancelled/completed invoice statuses
 
     if total_confirmed >= invoice.total_amount:
         invoice.status = models.InvoiceStatus.paid
@@ -186,7 +186,7 @@ def record_bank_transfer(
 
     if inv.status == models.InvoiceStatus.cancelled:
         raise HTTPException(400, "Cannot record payment on a cancelled invoice")
-    if inv.status == models.InvoiceStatus.paid:
+    if inv.status in (models.InvoiceStatus.paid, models.InvoiceStatus.completed):
         raise HTTPException(400, "Invoice is already fully paid")
 
     # Validate payment account
@@ -360,7 +360,7 @@ def initialize_paystack_payment(
 
     if inv.status == models.InvoiceStatus.cancelled:
         raise HTTPException(400, "Cannot create a payment link for a cancelled invoice")
-    if inv.status == models.InvoiceStatus.paid:
+    if inv.status in (models.InvoiceStatus.paid, models.InvoiceStatus.completed):
         raise HTTPException(400, "Invoice is already fully paid")
 
     customer = inv.customer
