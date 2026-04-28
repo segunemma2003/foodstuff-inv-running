@@ -23,10 +23,10 @@ def list_cost_prices(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.CostPrice)
+    cost_price_query = db.query(models.CostPrice)
     if product_id:
-        q = q.filter(models.CostPrice.product_id == product_id)
-    return q.order_by(models.CostPrice.effective_date.desc()).offset(skip).limit(limit).all()
+        cost_price_query = cost_price_query.filter(models.CostPrice.product_id == product_id)
+    return cost_price_query.order_by(models.CostPrice.effective_date.desc()).offset(skip).limit(limit).all()
 
 
 @router.post("", response_model=schemas.CostPriceOut, status_code=201)

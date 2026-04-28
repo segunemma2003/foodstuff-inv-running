@@ -30,10 +30,10 @@ def list_payment_accounts(
 ):
     """List all saved payment accounts (bank accounts).
     Pass active_only=false to include deactivated accounts."""
-    q = db.query(models.PaymentAccount)
+    payment_account_query = db.query(models.PaymentAccount)
     if active_only:
-        q = q.filter(models.PaymentAccount.is_active == True)
-    return q.order_by(models.PaymentAccount.is_default.desc(), models.PaymentAccount.bank_name).all()
+        payment_account_query = payment_account_query.filter(models.PaymentAccount.is_active == True)
+    return payment_account_query.order_by(models.PaymentAccount.is_default.desc(), models.PaymentAccount.bank_name).all()
 
 
 @router.post("", response_model=schemas.PaymentAccountOut, status_code=201)

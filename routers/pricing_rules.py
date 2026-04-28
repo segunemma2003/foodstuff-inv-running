@@ -17,10 +17,10 @@ def list_rules(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.PricingRule)
+    pricing_rule_query = db.query(models.PricingRule)
     if is_active is not None:
-        q = q.filter(models.PricingRule.is_active == is_active)
-    return q.order_by(models.PricingRule.rule_type, models.PricingRule.rule_name).all()
+        pricing_rule_query = pricing_rule_query.filter(models.PricingRule.is_active == is_active)
+    return pricing_rule_query.order_by(models.PricingRule.rule_type, models.PricingRule.rule_name).all()
 
 
 @router.post("", response_model=schemas.PricingRuleOut, status_code=201)

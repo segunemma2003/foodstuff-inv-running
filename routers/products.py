@@ -33,13 +33,13 @@ def _product_name_exists_in_market(
     market_id: Optional[int],
     exclude_product_id: Optional[int] = None,
 ) -> bool:
-    q = db.query(models.Product).filter(
+    existing_product_query = db.query(models.Product).filter(
         func.lower(models.Product.product_name) == product_name.strip().lower(),
         models.Product.category_id == market_id,
     )
     if exclude_product_id is not None:
-        q = q.filter(models.Product.id != exclude_product_id)
-    return db.query(q.exists()).scalar()
+        existing_product_query = existing_product_query.filter(models.Product.id != exclude_product_id)
+    return db.query(existing_product_query.exists()).scalar()
 
 
 def _generate_unique_sku(db: Session, product_name: str, market_id: Optional[int]) -> str:
@@ -91,10 +91,10 @@ def _enrich(product: models.Product, db: Session) -> schemas.ProductOut:
 
 @router.get("/categories", response_model=List[schemas.CategoryOut])
 def list_categories(db: Session = Depends(get_db), current_user: models.User = Depends(require_market_view_roles)):
-    q = db.query(models.ProductCategory)
+    market_query = db.query(models.ProductCategory)
     if current_user.role not in [models.UserRole.admin, models.UserRole.manager]:
-        q = q.filter(models.ProductCategory.is_active == True)
-    return q.all()
+        market_query = market_query.filter(models.ProductCategory.is_active == True)
+    return market_query.all()
 
 
 @router.post("/categories", response_model=schemas.CategoryOut, status_code=201)
@@ -114,10 +114,10 @@ def create_category(
 
 @router.get("/markets", response_model=List[schemas.MarketOut])
 def list_markets(db: Session = Depends(get_db), current_user: models.User = Depends(require_market_view_roles)):
-    q = db.query(models.ProductCategory)
+    market_query = db.query(models.ProductCategory)
     if current_user.role not in [models.UserRole.admin, models.UserRole.manager]:
-        q = q.filter(models.ProductCategory.is_active == True)
-    return q.all()
+        market_query = market_query.filter(models.ProductCategory.is_active == True)
+    return market_query.all()
 
 
 @router.post("/markets", response_model=schemas.MarketOut, status_code=201)
@@ -237,22 +237,22 @@ def list_products(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Product)
+    product_query = db.query(models.Product)
     if search:
         term = f"%{search}%"
-        q = q.filter(
+        product_query = product_query.filter(
             models.Product.product_name.ilike(term) | models.Product.sku.ilike(term)
         )
     selected_market = market_id or category_id
     if selected_market:
-        q = q.filter(models.Product.category_id == selected_market)
+        product_query = product_query.filter(models.Product.category_id == selected_market)
     if include_inactive:
         if is_active is not None:
-            q = q.filter(models.Product.is_active == is_active)
+            product_query = product_query.filter(models.Product.is_active == is_active)
     else:
         # Default behavior across the app: only enabled products are visible.
-        q = q.filter(models.Product.is_active == True)
-    products = q.order_by(models.Product.product_name).offset(skip).limit(limit).all()
+        product_query = product_query.filter(models.Product.is_active == True)
+    products = product_query.order_by(models.Product.product_name).offset(skip).limit(limit).all()
     return [_enrich(p, db) for p in products]
 
 

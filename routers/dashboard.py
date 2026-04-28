@@ -457,10 +457,10 @@ def list_queue_events(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.QueueEvent)
+    queue_event_query = db.query(models.QueueEvent)
     if event_type:
-        q = q.filter(models.QueueEvent.event_type == event_type)
-    events = q.order_by(models.QueueEvent.created_at.desc()).limit(limit).all()
+        queue_event_query = queue_event_query.filter(models.QueueEvent.event_type == event_type)
+    events = queue_event_query.order_by(models.QueueEvent.created_at.desc()).limit(limit).all()
 
     out: list[schemas.QueueEventOut] = []
     for event in events:

@@ -220,18 +220,18 @@ def list_quotations(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Quotation)
+    quotation_query = db.query(models.Quotation)
     if status:
-        q = q.filter(models.Quotation.status == status)
+        quotation_query = quotation_query.filter(models.Quotation.status == status)
     if customer_id:
-        q = q.filter(models.Quotation.customer_id == customer_id)
+        quotation_query = quotation_query.filter(models.Quotation.customer_id == customer_id)
     if created_by:
-        q = q.filter(models.Quotation.created_by == created_by)
+        quotation_query = quotation_query.filter(models.Quotation.created_by == created_by)
     if date_from:
-        q = q.filter(models.Quotation.quotation_date >= date_from)
+        quotation_query = quotation_query.filter(models.Quotation.quotation_date >= date_from)
     if date_to:
-        q = q.filter(models.Quotation.quotation_date <= date_to)
-    return q.order_by(models.Quotation.created_at.desc()).offset(skip).limit(limit).all()
+        quotation_query = quotation_query.filter(models.Quotation.quotation_date <= date_to)
+    return quotation_query.order_by(models.Quotation.created_at.desc()).offset(skip).limit(limit).all()
 
 
 @router.post("", response_model=schemas.QuotationOut, status_code=201)
@@ -277,10 +277,10 @@ def get_quotation(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
-    if not q:
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
         raise HTTPException(404, "Quotation not found")
-    return q
+    return quotation
 
 
 @router.put("/{quotation_id}", response_model=schemas.QuotationOut)
@@ -290,35 +290,35 @@ def update_quotation(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_not_analyst),
 ):
-    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
-    if not q:
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
         raise HTTPException(404, "Quotation not found")
-    if q.status != models.QuotationStatus.draft:
-        raise HTTPException(400, f"Only draft quotations can be edited (current: {q.status.value})")
+    if quotation.status != models.QuotationStatus.draft:
+        raise HTTPException(400, f"Only draft quotations can be edited (current: {quotation.status.value})")
 
     if body.delivery_type:
-        q.delivery_type = body.delivery_type
+        quotation.delivery_type = body.delivery_type
     if body.payment_term:
-        q.payment_term = body.payment_term
+        quotation.payment_term = body.payment_term
     if body.notes is not None:
-        q.notes = body.notes
+        quotation.notes = body.notes
 
     if body.items is not None:
-        for item in q.items:
+        for item in quotation.items:
             db.delete(item)
-        delivery = body.delivery_type or q.delivery_type
-        payment = body.payment_term or q.payment_term
+        delivery = body.delivery_type or quotation.delivery_type
+        payment = body.payment_term or quotation.payment_term
         items, total = _calc_and_build_items(body.items, delivery, payment, db)
         for item in items:
-            item.quotation_id = q.id
+            item.quotation_id = quotation.id
             db.add(item)
-        q.total_amount = total
+        quotation.total_amount = total
 
-    audit.log(db, models.AuditAction.update, models.AuditEntity.quotation, q.id,
-               current_user.id, description=f"Updated quotation {q.quotation_number}")
+    audit.log(db, models.AuditAction.update, models.AuditEntity.quotation, quotation.id,
+               current_user.id, description=f"Updated quotation {quotation.quotation_number}")
     db.commit()
-    db.refresh(q)
-    return q
+    db.refresh(quotation)
+    return quotation
 
 
 @router.post("/{quotation_id}/submit", response_model=schemas.QuotationOut)
@@ -327,21 +327,21 @@ def submit_quotation(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_not_analyst),
 ):
-    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
-    if not q:
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
         raise HTTPException(404, "Quotation not found")
-    if q.status != models.QuotationStatus.draft:
-        raise HTTPException(400, f"Only draft quotations can be submitted (current: {q.status.value})")
+    if quotation.status != models.QuotationStatus.draft:
+        raise HTTPException(400, f"Only draft quotations can be submitted (current: {quotation.status.value})")
 
-    q.status = models.QuotationStatus.pending_approval
-    audit.log(db, models.AuditAction.submit, models.AuditEntity.quotation, q.id,
-               current_user.id, description=f"Submitted quotation {q.quotation_number} for approval")
+    quotation.status = models.QuotationStatus.pending_approval
+    audit.log(db, models.AuditAction.submit, models.AuditEntity.quotation, quotation.id,
+               current_user.id, description=f"Submitted quotation {quotation.quotation_number} for approval")
     db.commit()
-    db.refresh(q)
+    db.refresh(quotation)
 
     # Notify approvers — queued; API returns before email is sent
-    _notify_approvers(db, q, current_user.full_name)
-    return q
+    _notify_approvers(db, quotation, current_user.full_name)
+    return quotation
 
 
 @router.post("/{quotation_id}/approve", response_model=schemas.QuotationOut)
@@ -350,32 +350,32 @@ def approve_quotation(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin_or_manager),
 ):
-    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
-    if not q:
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
         raise HTTPException(404, "Quotation not found")
-    if q.status != models.QuotationStatus.pending_approval:
-        raise HTTPException(400, f"Only pending quotations can be approved (current: {q.status.value})")
+    if quotation.status != models.QuotationStatus.pending_approval:
+        raise HTTPException(400, f"Only pending quotations can be approved (current: {quotation.status.value})")
 
-    q.status = models.QuotationStatus.approved
-    q.approved_by = current_user.id
-    q.approved_at = datetime.utcnow()
-    audit.log(db, models.AuditAction.approve, models.AuditEntity.quotation, q.id,
-               current_user.id, description=f"Approved quotation {q.quotation_number}")
-    invoice = _build_invoice_from_quotation(db, q, current_user)
+    quotation.status = models.QuotationStatus.approved
+    quotation.approved_by = current_user.id
+    quotation.approved_at = datetime.utcnow()
+    audit.log(db, models.AuditAction.approve, models.AuditEntity.quotation, quotation.id,
+               current_user.id, description=f"Approved quotation {quotation.quotation_number}")
+    invoice = _build_invoice_from_quotation(db, quotation, current_user)
     db.commit()
-    db.refresh(q)
+    db.refresh(quotation)
     db.refresh(invoice)
 
     # Notify creator — queued
-    creator = db.query(models.User).filter(models.User.id == q.created_by).first()
+    creator = db.query(models.User).filter(models.User.id == quotation.created_by).first()
     if creator and creator.email:
         subject, html, text = tpl_quotation_approved(
-            q.quotation_number,
-            q.customer.customer_name if q.customer else "",
+            quotation.quotation_number,
+            quotation.customer.customer_name if quotation.customer else "",
         )
         send_email_task.delay(creator.email, subject, html, text)
 
-    return q
+    return quotation
 
 
 @router.post("/{quotation_id}/reject", response_model=schemas.QuotationOut)
@@ -385,30 +385,30 @@ def reject_quotation(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin_or_manager),
 ):
-    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
-    if not q:
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
         raise HTTPException(404, "Quotation not found")
-    if q.status != models.QuotationStatus.pending_approval:
-        raise HTTPException(400, f"Only pending quotations can be rejected (current: {q.status.value})")
+    if quotation.status != models.QuotationStatus.pending_approval:
+        raise HTTPException(400, f"Only pending quotations can be rejected (current: {quotation.status.value})")
 
-    q.status = models.QuotationStatus.rejected
-    q.rejection_reason = body.reason
-    audit.log(db, models.AuditAction.reject, models.AuditEntity.quotation, q.id,
-               current_user.id, description=f"Rejected quotation {q.quotation_number}: {body.reason}")
+    quotation.status = models.QuotationStatus.rejected
+    quotation.rejection_reason = body.reason
+    audit.log(db, models.AuditAction.reject, models.AuditEntity.quotation, quotation.id,
+               current_user.id, description=f"Rejected quotation {quotation.quotation_number}: {body.reason}")
     db.commit()
-    db.refresh(q)
+    db.refresh(quotation)
 
     # Notify creator — queued
-    creator = db.query(models.User).filter(models.User.id == q.created_by).first()
+    creator = db.query(models.User).filter(models.User.id == quotation.created_by).first()
     if creator and creator.email:
         subject, html, text = tpl_quotation_rejected(
-            q.quotation_number,
-            q.customer.customer_name if q.customer else "",
+            quotation.quotation_number,
+            quotation.customer.customer_name if quotation.customer else "",
             body.reason,
         )
         send_email_task.delay(creator.email, subject, html, text)
 
-    return q
+    return quotation
 
 
 @router.get("/{quotation_id}/pdf")
@@ -422,15 +422,15 @@ def download_quotation_pdf(
     from fastapi.responses import StreamingResponse
     from utils.pdf_generator import generate_quotation_pdf as gen_pdf
 
-    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
-    if not q:
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
         raise HTTPException(404, "Quotation not found")
 
-    pdf_bytes = gen_pdf(q)
+    pdf_bytes = gen_pdf(quotation)
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{q.quotation_number}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="{quotation.quotation_number}.pdf"'},
     )
 
 
@@ -441,12 +441,12 @@ def send_quotation_to_customer(
     current_user: models.User = Depends(require_not_analyst),
 ):
     """Email the quotation PDF to the customer. Queued via Celery."""
-    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
-    if not q:
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
         raise HTTPException(404, "Quotation not found")
-    if q.status == models.QuotationStatus.draft:
+    if quotation.status == models.QuotationStatus.draft:
         raise HTTPException(400, "Submit the quotation before sending it to the customer")
-    if not q.customer or not q.customer.email:
+    if not quotation.customer or not quotation.customer.email:
         raise HTTPException(400, "Customer has no email address on file")
 
     task = send_quotation_to_customer_task.delay(quotation_id)
@@ -454,12 +454,12 @@ def send_quotation_to_customer(
         db,
         task_id=task.id,
         event_type="quotation_email",
-        title=f"Send quotation email {q.quotation_number}",
+        title=f"Send quotation email {quotation.quotation_number}",
         requested_by=current_user.id if current_user else None,
-        metadata={"quotation_id": q.id, "customer_email": q.customer.email if q.customer else None},
+        metadata={"quotation_id": quotation.id, "customer_email": quotation.customer.email if quotation.customer else None},
     )
     return schemas.MessageResponse(
-        message=f"Quotation {q.quotation_number} queued for delivery to {q.customer.email}"
+        message=f"Quotation {quotation.quotation_number} queued for delivery to {quotation.customer.email}"
     )
 
 
@@ -472,13 +472,13 @@ def upload_quotation_to_make(
 ):
     from utils.pdf_generator import generate_quotation_pdf as gen_pdf
 
-    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
-    if not q:
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
         raise HTTPException(404, "Quotation not found")
-    if q.status == models.QuotationStatus.draft:
+    if quotation.status == models.QuotationStatus.draft:
         raise HTTPException(400, "Submit the quotation before sending it")
 
-    pdf_bytes = gen_pdf(q)
+    pdf_bytes = gen_pdf(quotation)
     recipients: List[str] = [INVOICE_PRIMARY_RECIPIENT]
     if body.additional_emails:
         recipients.extend([e.strip() for e in body.additional_emails if e and e.strip()])
@@ -488,10 +488,10 @@ def upload_quotation_to_make(
 
     task = send_email_with_attachment_task.delay(
         recipients,
-        f"Quotation {q.quotation_number}",
-        f"<p>Please find attached quotation <strong>{q.quotation_number}</strong>.</p>",
-        f"Please find attached quotation {q.quotation_number}.",
-        f"{q.quotation_number}.pdf",
+        f"Quotation {quotation.quotation_number}",
+        f"<p>Please find attached quotation <strong>{quotation.quotation_number}</strong>.</p>",
+        f"Please find attached quotation {quotation.quotation_number}.",
+        f"{quotation.quotation_number}.pdf",
         "application/pdf",
         base64.b64encode(pdf_bytes).decode("utf-8"),
     )
@@ -499,9 +499,9 @@ def upload_quotation_to_make(
         db,
         task_id=task.id,
         event_type="quotation_upload_to_make",
-        title=f"Upload quotation to make {q.quotation_number}",
+        title=f"Upload quotation to make {quotation.quotation_number}",
         requested_by=_.id if _ else None,
-        metadata={"quotation_id": q.id, "recipients": recipients},
+        metadata={"quotation_id": quotation.id, "recipients": recipients},
     )
 
     return schemas.MessageResponse(message=f"Quotation queued for {len(recipients)} recipient(s)")
@@ -518,10 +518,10 @@ def generate_quotation_pdf(
     Queue PDF generation. Returns a task_id immediately (< 5 ms).
     Poll GET /api/v1/jobs/{task_id} then download via GET /api/v1/jobs/{task_id}/download.
     """
-    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
-    if not q:
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
         raise HTTPException(404, "Quotation not found")
-    if q.status == models.QuotationStatus.draft:
+    if quotation.status == models.QuotationStatus.draft:
         raise HTTPException(400, "PDF is only available after the quotation is submitted")
 
     task = generate_quotation_pdf_task.delay(quotation_id)
@@ -529,13 +529,13 @@ def generate_quotation_pdf(
         db,
         task_id=task.id,
         event_type="quotation_pdf",
-        title=f"Generate quotation PDF {q.quotation_number}",
+        title=f"Generate quotation PDF {quotation.quotation_number}",
         requested_by=_.id if _ else None,
-        metadata={"quotation_id": q.id},
+        metadata={"quotation_id": quotation.id},
     )
     return schemas.JobEnqueuedResponse(
         task_id=task.id,
-        message=f"PDF generation queued for {q.quotation_number}. "
+        message=f"PDF generation queued for {quotation.quotation_number}. "
                 f"Poll /api/v1/jobs/{task.id} for status.",
     )
 
@@ -549,22 +549,22 @@ def convert_to_invoice(
     from utils.tasks import send_email_task
     from utils.email import tpl_invoice_created
 
-    q = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
-    if not q:
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
         raise HTTPException(404, "Quotation not found")
-    if q.status != models.QuotationStatus.approved:
+    if quotation.status != models.QuotationStatus.approved:
         raise HTTPException(400, "Only approved quotations can be converted to invoices")
-    if q.invoice:
-        raise HTTPException(400, f"Invoice {q.invoice.invoice_number} already exists for this quotation")
-    invoice = _build_invoice_from_quotation(db, q, current_user)
+    if quotation.invoice:
+        raise HTTPException(400, f"Invoice {quotation.invoice.invoice_number} already exists for this quotation")
+    invoice = _build_invoice_from_quotation(db, quotation, current_user)
     db.commit()
     db.refresh(invoice)
 
     # Notify creator — queued
     if current_user.email:
         subj, html, text = tpl_invoice_created(
-            invoice.invoice_number, q.quotation_number,
-            q.customer.customer_name if q.customer else "",
+            invoice.invoice_number, quotation.quotation_number,
+            quotation.customer.customer_name if quotation.customer else "",
             float(invoice.total_amount),
         )
         send_email_task.delay(current_user.email, subj, html, text)

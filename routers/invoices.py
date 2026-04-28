@@ -29,7 +29,7 @@ def list_convertible_quotations(
     _: models.User = Depends(get_current_user),
 ):
     """Return approved quotations that have not yet been converted to invoices."""
-    q = (
+    convertible_quotation_query = (
         db.query(models.Quotation)
         .outerjoin(models.Invoice, models.Invoice.quotation_id == models.Quotation.id)
         .filter(
@@ -38,8 +38,8 @@ def list_convertible_quotations(
         )
     )
     if customer_id:
-        q = q.filter(models.Quotation.customer_id == customer_id)
-    return q.order_by(models.Quotation.approved_at.desc()).all()
+        convertible_quotation_query = convertible_quotation_query.filter(models.Quotation.customer_id == customer_id)
+    return convertible_quotation_query.order_by(models.Quotation.approved_at.desc()).all()
 
 
 @router.get("/template")
@@ -191,22 +191,22 @@ def list_invoices(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Invoice)
+    invoice_query = db.query(models.Invoice)
     if customer_id:
-        q = q.filter(models.Invoice.customer_id == customer_id)
+        invoice_query = invoice_query.filter(models.Invoice.customer_id == customer_id)
     if status:
-        q = q.filter(models.Invoice.status == status)
+        invoice_query = invoice_query.filter(models.Invoice.status == status)
     if created_by:
-        q = q.filter(models.Invoice.created_by == created_by)
+        invoice_query = invoice_query.filter(models.Invoice.created_by == created_by)
     if date_from:
-        q = q.filter(models.Invoice.invoice_date >= date_from)
+        invoice_query = invoice_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
-        q = q.filter(models.Invoice.invoice_date <= date_to)
+        invoice_query = invoice_query.filter(models.Invoice.invoice_date <= date_to)
     if payment_term:
-        q = q.filter(models.Invoice.payment_term == payment_term)
+        invoice_query = invoice_query.filter(models.Invoice.payment_term == payment_term)
     if delivery_type:
-        q = q.filter(models.Invoice.delivery_type == delivery_type)
-    return q.order_by(models.Invoice.created_at.desc()).offset(skip).limit(limit).all()
+        invoice_query = invoice_query.filter(models.Invoice.delivery_type == delivery_type)
+    return invoice_query.order_by(models.Invoice.created_at.desc()).offset(skip).limit(limit).all()
 
 
 @router.post("", response_model=schemas.InvoiceOut, status_code=201)

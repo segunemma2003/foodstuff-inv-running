@@ -25,17 +25,17 @@ def list_audit_trail(
     db: Session = Depends(get_db),
     _: models.User = Depends(require_admin_or_manager),
 ):
-    q = db.query(models.AuditTrail)
+    audit_trail_query = db.query(models.AuditTrail)
     if entity_type:
-        q = q.filter(models.AuditTrail.entity_type == entity_type)
+        audit_trail_query = audit_trail_query.filter(models.AuditTrail.entity_type == entity_type)
     if entity_id:
-        q = q.filter(models.AuditTrail.entity_id == entity_id)
+        audit_trail_query = audit_trail_query.filter(models.AuditTrail.entity_id == entity_id)
     if user_id:
-        q = q.filter(models.AuditTrail.user_id == user_id)
+        audit_trail_query = audit_trail_query.filter(models.AuditTrail.user_id == user_id)
     if action:
-        q = q.filter(models.AuditTrail.action == action)
+        audit_trail_query = audit_trail_query.filter(models.AuditTrail.action == action)
     if date_from:
-        q = q.filter(models.AuditTrail.timestamp >= date_from)
+        audit_trail_query = audit_trail_query.filter(models.AuditTrail.timestamp >= date_from)
     if date_to:
-        q = q.filter(models.AuditTrail.timestamp <= date_to)
-    return q.order_by(models.AuditTrail.timestamp.desc()).offset(skip).limit(limit).all()
+        audit_trail_query = audit_trail_query.filter(models.AuditTrail.timestamp <= date_to)
+    return audit_trail_query.order_by(models.AuditTrail.timestamp.desc()).offset(skip).limit(limit).all()

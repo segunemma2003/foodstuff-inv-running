@@ -26,7 +26,7 @@ def list_customers(
     # Subquery: last active invoice date per customer
     last_order_sq = (
         db.query(
-            models.Invoice.customer_id.label("cid"),
+            models.Invoice.customer_id.label("customer_id"),
             func.max(models.Invoice.invoice_date).label("last_date"),
         )
         .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
@@ -34,24 +34,24 @@ def list_customers(
         .subquery()
     )
 
-    q = (
+    customer_query = (
         db.query(models.Customer, last_order_sq.c.last_date)
-        .outerjoin(last_order_sq, models.Customer.id == last_order_sq.c.cid)
+        .outerjoin(last_order_sq, models.Customer.id == last_order_sq.c.customer_id)
     )
     if search:
         term = f"%{search}%"
-        q = q.filter(
+        customer_query = customer_query.filter(
             models.Customer.customer_name.ilike(term)
             | models.Customer.business_name.ilike(term)
             | models.Customer.phone.ilike(term)
             | models.Customer.email.ilike(term)
         )
     if category:
-        q = q.filter(models.Customer.category == category)
+        customer_query = customer_query.filter(models.Customer.category == category)
     if is_active is not None:
-        q = q.filter(models.Customer.is_active == is_active)
+        customer_query = customer_query.filter(models.Customer.is_active == is_active)
 
-    rows = q.order_by(models.Customer.customer_name).offset(skip).limit(limit).all()
+    rows = customer_query.order_by(models.Customer.customer_name).offset(skip).limit(limit).all()
 
     results = []
     for customer, last_date in rows:
@@ -153,12 +153,12 @@ def customer_invoices(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Invoice).filter(models.Invoice.customer_id == customer_id)
+    invoice_query = db.query(models.Invoice).filter(models.Invoice.customer_id == customer_id)
     if date_from:
-        q = q.filter(models.Invoice.invoice_date >= date_from)
+        invoice_query = invoice_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
-        q = q.filter(models.Invoice.invoice_date <= date_to)
-    return q.order_by(models.Invoice.created_at.desc()).offset(skip).limit(limit).all()
+        invoice_query = invoice_query.filter(models.Invoice.invoice_date <= date_to)
+    return invoice_query.order_by(models.Invoice.created_at.desc()).offset(skip).limit(limit).all()
 
 
 @router.get("/{customer_id}/analytics", response_model=schemas.CustomerDetailOut)
@@ -248,7 +248,7 @@ def customer_top_products(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = (
+    product_sales_query = (
         db.query(
             models.Product.id,
             models.Product.product_name,
@@ -263,19 +263,19 @@ def customer_top_products(
         )
     )
     if date_from:
-        q = q.filter(models.Invoice.invoice_date >= date_from)
+        product_sales_query = product_sales_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
-        q = q.filter(models.Invoice.invoice_date <= date_to)
+        product_sales_query = product_sales_query.filter(models.Invoice.invoice_date <= date_to)
     rows = (
-        q.group_by(models.Product.id, models.Product.product_name)
+        product_sales_query.group_by(models.Product.id, models.Product.product_name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
         .limit(limit)
         .all()
     )
     return [
-        {"product_id": r.id, "product_name": r.product_name,
-         "total_qty": float(r.total_qty), "total_value": float(r.total_value)}
-        for r in rows
+        {"product_id": product_row.id, "product_name": product_row.product_name,
+         "total_qty": float(product_row.total_qty), "total_value": float(product_row.total_value)}
+        for product_row in rows
     ]
 
 
@@ -333,8 +333,8 @@ def customer_cost_of_sales(
         .all()
     )
 
-    total_cost    = sum(float(r.cost or 0)    for r in product_rows)
-    total_revenue = sum(float(r.revenue or 0) for r in product_rows)
+    total_cost    = sum(float(product_row.cost or 0) for product_row in product_rows)
+    total_revenue = sum(float(product_row.revenue or 0) for product_row in product_rows)
     gross_profit  = total_revenue - total_cost
     gross_margin  = round(gross_profit / total_revenue * 100, 2) if total_revenue else 0
 
@@ -348,30 +348,30 @@ def customer_cost_of_sales(
         },
         "by_product": [
             {
-                "product_id": r.product_id,
-                "product_name": r.product_name,
-                "qty": float(r.qty or 0),
-                "cost": float(r.cost or 0),
-                "revenue": float(r.revenue or 0),
-                "gross_profit": float(r.revenue or 0) - float(r.cost or 0),
+                "product_id": product_row.product_id,
+                "product_name": product_row.product_name,
+                "qty": float(product_row.qty or 0),
+                "cost": float(product_row.cost or 0),
+                "revenue": float(product_row.revenue or 0),
+                "gross_profit": float(product_row.revenue or 0) - float(product_row.cost or 0),
                 "margin_pct": round(
-                    (float(r.revenue or 0) - float(r.cost or 0)) / float(r.revenue) * 100, 2
-                ) if r.revenue else 0,
+                    (float(product_row.revenue or 0) - float(product_row.cost or 0)) / float(product_row.revenue) * 100, 2
+                ) if product_row.revenue else 0,
             }
-            for r in product_rows
+            for product_row in product_rows
         ],
         "by_invoice": [
             {
-                "invoice_id": r.id,
-                "invoice_number": r.invoice_number,
-                "invoice_date": str(r.invoice_date),
-                "cost": float(r.cost or 0),
-                "revenue": float(r.revenue or 0),
-                "gross_profit": float(r.revenue or 0) - float(r.cost or 0),
+                "invoice_id": invoice_row.id,
+                "invoice_number": invoice_row.invoice_number,
+                "invoice_date": str(invoice_row.invoice_date),
+                "cost": float(invoice_row.cost or 0),
+                "revenue": float(invoice_row.revenue or 0),
+                "gross_profit": float(invoice_row.revenue or 0) - float(invoice_row.cost or 0),
                 "margin_pct": round(
-                    (float(r.revenue or 0) - float(r.cost or 0)) / float(r.revenue) * 100, 2
-                ) if r.revenue else 0,
+                    (float(invoice_row.revenue or 0) - float(invoice_row.cost or 0)) / float(invoice_row.revenue) * 100, 2
+                ) if invoice_row.revenue else 0,
             }
-            for r in invoice_rows
+            for invoice_row in invoice_rows
         ],
     }

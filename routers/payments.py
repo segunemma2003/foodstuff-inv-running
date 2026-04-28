@@ -91,14 +91,14 @@ def list_payments(
     _: models.User = Depends(get_current_user),
 ):
     """List payment records with optional filters."""
-    q = db.query(models.Payment)
+    payment_query = db.query(models.Payment)
     if invoice_id:
-        q = q.filter(models.Payment.invoice_id == invoice_id)
+        payment_query = payment_query.filter(models.Payment.invoice_id == invoice_id)
     if status:
-        q = q.filter(models.Payment.status == status)
+        payment_query = payment_query.filter(models.Payment.status == status)
     if payment_method:
-        q = q.filter(models.Payment.payment_method == payment_method)
-    return q.order_by(models.Payment.created_at.desc()).offset(skip).limit(limit).all()
+        payment_query = payment_query.filter(models.Payment.payment_method == payment_method)
+    return payment_query.order_by(models.Payment.created_at.desc()).offset(skip).limit(limit).all()
 
 
 @router.get("/invoice/{invoice_id}/summary", response_model=schemas.InvoicePaymentSummary)

@@ -18,22 +18,22 @@ def _enum_or_str_value(v):
     return v.value if hasattr(v, "value") else str(v)
 
 
-def _inv_filters(q, date_from, date_to, delivery_type=None, payment_term=None,
+def _inv_filters(invoice_query, date_from, date_to, delivery_type=None, payment_term=None,
                  staff_id=None, customer_id=None):
-    q = q.filter(models.Invoice.status != models.InvoiceStatus.cancelled)
+    invoice_query = invoice_query.filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     if date_from:
-        q = q.filter(models.Invoice.invoice_date >= date_from)
+        invoice_query = invoice_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
-        q = q.filter(models.Invoice.invoice_date <= date_to)
+        invoice_query = invoice_query.filter(models.Invoice.invoice_date <= date_to)
     if delivery_type:
-        q = q.filter(models.Invoice.delivery_type == delivery_type)
+        invoice_query = invoice_query.filter(models.Invoice.delivery_type == delivery_type)
     if payment_term:
-        q = q.filter(models.Invoice.payment_term == payment_term)
+        invoice_query = invoice_query.filter(models.Invoice.payment_term == payment_term)
     if staff_id:
-        q = q.filter(models.Invoice.created_by == staff_id)
+        invoice_query = invoice_query.filter(models.Invoice.created_by == staff_id)
     if customer_id:
-        q = q.filter(models.Invoice.customer_id == customer_id)
-    return q
+        invoice_query = invoice_query.filter(models.Invoice.customer_id == customer_id)
+    return invoice_query
 
 
 def _invoice_ids_for_market(db: Session, market_id: Optional[int]):
@@ -85,18 +85,33 @@ def sales_analytics(
         filtered_invoice_query = filtered_invoice_query.filter(models.Invoice.id.in_(market_invoice_ids_subquery))
     if product_invoice_ids_subquery is not None:
         filtered_invoice_query = filtered_invoice_query.filter(models.Invoice.id.in_(product_invoice_ids_subquery))
-    filtered_invoice_ids_subquery = filtered_invoice_query.distinct().subquery()
-
-    filtered_invoice_ids_select = db.query(filtered_invoice_ids_subquery.c.invoice_id)
+    filtered_invoice_ids = [row.invoice_id for row in filtered_invoice_query.distinct().all()]
+    if not filtered_invoice_ids:
+        return schemas.SalesAnalytics(
+            total_sales_value=0,
+            total_invoices=0,
+            total_quotations=0,
+            quotation_conversion_rate=0,
+            average_invoice_value=0,
+            top_customers=[],
+            top_products=[],
+            top_markets=[],
+            top_categories=[],
+            sales_by_delivery_type={},
+            sales_by_payment_term={},
+            sales_by_staff=[],
+            daily_trend=[],
+            monthly_trend=[],
+        )
 
     total_invoice_count = (
         db.query(func.count(func.distinct(models.Invoice.id)))
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids))
         .scalar() or 0
     )
     total_sales_value = (
         db.query(func.sum(models.InvoiceItem.line_total))
-        .filter(models.InvoiceItem.invoice_id.in_(filtered_invoice_ids_select))
+        .filter(models.InvoiceItem.invoice_id.in_(filtered_invoice_ids))
         .scalar() or 0
     )
 
@@ -118,7 +133,7 @@ def sales_analytics(
         )
         .join(models.Invoice, models.Invoice.customer_id == models.Customer.id)
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids))
         .group_by(models.Customer.id, models.Customer.customer_name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
         .limit(10)
@@ -134,7 +149,7 @@ def sales_analytics(
         )
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids))
     )
     if selected_market_id:
         top_products_query = top_products_query.filter(models.Product.category_id == selected_market_id)
@@ -157,7 +172,7 @@ def sales_analytics(
         .join(models.Product, models.Product.category_id == models.ProductCategory.id)
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids))
     )
     if selected_market_id:
         top_markets_query = top_markets_query.filter(models.Product.category_id == selected_market_id)
@@ -175,7 +190,7 @@ def sales_analytics(
             func.sum(models.InvoiceItem.line_total).label("t"),
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids))
         .group_by(models.Invoice.delivery_type)
         .all()
     )
@@ -186,7 +201,7 @@ def sales_analytics(
             func.sum(models.InvoiceItem.line_total).label("t"),
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids))
         .group_by(models.Invoice.payment_term)
         .all()
     )
@@ -200,7 +215,7 @@ def sales_analytics(
         )
         .join(models.Invoice, models.Invoice.created_by == models.User.id)
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids))
         .group_by(models.User.id, models.User.full_name)
         .all()
     )
@@ -216,7 +231,7 @@ def sales_analytics(
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
         .filter(
-            models.Invoice.id.in_(filtered_invoice_ids_select),
+            models.Invoice.id.in_(filtered_invoice_ids),
             models.Invoice.invoice_date >= trend_start_date,
             models.Invoice.invoice_date <= trend_end_date,
         )
@@ -233,7 +248,7 @@ def sales_analytics(
             func.count(func.distinct(models.Invoice.id)).label("count"),
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids))
         .group_by("year", "month")
         .order_by("year", "month")
         .all()
@@ -246,49 +261,49 @@ def sales_analytics(
         quotation_conversion_rate=round(conversion_rate, 2),
         average_invoice_value=round(average_invoice_value, 2),
         top_customers=[
-            {"customer_id": r.id, "customer_name": r.customer_name, "total": float(r.total or 0)}
-            for r in top_customers_rows
+            {"customer_id": customer_row.id, "customer_name": customer_row.customer_name, "total": float(customer_row.total or 0)}
+            for customer_row in top_customers_rows
         ],
         top_products=[
-            {"product_id": r.id, "product_name": r.product_name,
-             "total": float(r.total or 0), "qty": float(r.qty or 0)}
-            for r in top_products_rows
+            {"product_id": product_row.id, "product_name": product_row.product_name,
+             "total": float(product_row.total or 0), "qty": float(product_row.qty or 0)}
+            for product_row in top_products_rows
         ],
         top_markets=[
             {
-                "category_id": r.id,
-                "category_name": r.name,
-                "market_id": r.id,
-                "market_name": r.name,
-                "total": float(r.total or 0),
+                "category_id": market_row.id,
+                "category_name": market_row.name,
+                "market_id": market_row.id,
+                "market_name": market_row.name,
+                "total": float(market_row.total or 0),
             }
-            for r in top_markets_rows
+            for market_row in top_markets_rows
         ],
         top_categories=[
             {
-                "category_id": r.id,
-                "category_name": r.name,
-                "market_id": r.id,
-                "market_name": r.name,
-                "total": float(r.total or 0),
+                "category_id": market_row.id,
+                "category_name": market_row.name,
+                "market_id": market_row.id,
+                "market_name": market_row.name,
+                "total": float(market_row.total or 0),
             }
-            for r in top_markets_rows
+            for market_row in top_markets_rows
         ],
-        sales_by_delivery_type={_enum_or_str_value(r.delivery_type): float(r.t or 0) for r in delivery_split_rows},
-        sales_by_payment_term={r.payment_term: float(r.t or 0) for r in payment_term_split_rows},
+        sales_by_delivery_type={_enum_or_str_value(delivery_row.delivery_type): float(delivery_row.t or 0) for delivery_row in delivery_split_rows},
+        sales_by_payment_term={payment_term_row.payment_term: float(payment_term_row.t or 0) for payment_term_row in payment_term_split_rows},
         sales_by_staff=[
-            {"user_id": r.id, "full_name": r.full_name,
-             "total_sales": float(r.total or 0), "invoice_count": int(r.count or 0)}
-            for r in staff_sales_rows
+            {"user_id": staff_row.id, "full_name": staff_row.full_name,
+             "total_sales": float(staff_row.total or 0), "invoice_count": int(staff_row.count or 0)}
+            for staff_row in staff_sales_rows
         ],
         daily_trend=[
-            {"date": str(r.invoice_date), "total": float(r.total or 0), "count": int(r.count or 0)}
-            for r in daily_trend_rows
+            {"date": str(daily_row.invoice_date), "total": float(daily_row.total or 0), "count": int(daily_row.count or 0)}
+            for daily_row in daily_trend_rows
         ],
         monthly_trend=[
-            {"year": int(r.year), "month": int(r.month),
-             "total": float(r.total or 0), "count": int(r.count or 0)}
-            for r in monthly_trend_rows
+            {"year": int(monthly_row.year), "month": int(monthly_row.month),
+             "total": float(monthly_row.total or 0), "count": int(monthly_row.count or 0)}
+            for monthly_row in monthly_trend_rows
         ],
     )
 
@@ -317,13 +332,13 @@ def customer_behavior(
     if not customers:
         return []
 
-    cust_ids = [c.id for c in customers]
+    customer_ids = [customer.id for customer in customers]
 
     # ── Batch: all active invoices for these customers (1 query) ─────────────
     all_invoices = (
         db.query(models.Invoice)
         .filter(
-            models.Invoice.customer_id.in_(cust_ids),
+            models.Invoice.customer_id.in_(customer_ids),
             models.Invoice.status != models.InvoiceStatus.cancelled,
         )
     )
@@ -346,7 +361,7 @@ def customer_behavior(
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
         .join(models.Product, models.Product.id == models.InvoiceItem.product_id)
         .filter(
-            models.Invoice.customer_id.in_(cust_ids),
+            models.Invoice.customer_id.in_(customer_ids),
             models.Invoice.status != models.InvoiceStatus.cancelled,
         )
     )
@@ -358,19 +373,19 @@ def customer_behavior(
         models.Product.product_name,
     ).all()
     top_prod_by_cust: dict = defaultdict(list)
-    for r in prod_rows:
-        top_prod_by_cust[r.customer_id].append({
-            "product_id": r.product_id, "product_name": r.product_name,
-            "qty": float(r.qty), "value": float(r.value),
+    for product_row in prod_rows:
+        top_prod_by_cust[product_row.customer_id].append({
+            "product_id": product_row.product_id, "product_name": product_row.product_name,
+            "qty": float(product_row.qty), "value": float(product_row.value),
         })
-    for cid in top_prod_by_cust:
-        top_prod_by_cust[cid].sort(key=lambda x: x["value"], reverse=True)
-        top_prod_by_cust[cid] = top_prod_by_cust[cid][:10]
+    for customer_id in top_prod_by_cust:
+        top_prod_by_cust[customer_id].sort(key=lambda x: x["value"], reverse=True)
+        top_prod_by_cust[customer_id] = top_prod_by_cust[customer_id][:10]
 
     # ── Build result list in Python ───────────────────────────────────────────
     results = []
-    for c in customers:
-        invoices = inv_by_cust[c.id]
+    for customer in customers:
+        invoices = inv_by_cust[customer.id]
         if not invoices:
             continue
 
@@ -399,9 +414,9 @@ def customer_behavior(
             )
 
         results.append(schemas.CustomerBehaviorOut(
-            customer_id=c.id,
-            customer_name=c.customer_name,
-            top_products=top_prod_by_cust[c.id],
+            customer_id=customer.id,
+            customer_name=customer.customer_name,
+            top_products=top_prod_by_cust[customer.id],
             purchase_frequency_days=freq,
             total_orders=len(invoices),
             total_value=total_value,
@@ -425,7 +440,7 @@ def product_sales_analytics(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = (
+    product_sales_query = (
         db.query(
             models.Product.id,
             models.Product.product_name,
@@ -439,33 +454,33 @@ def product_sales_analytics(
         .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     )
     if date_from:
-        q = q.filter(models.Invoice.invoice_date >= date_from)
+        product_sales_query = product_sales_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
-        q = q.filter(models.Invoice.invoice_date <= date_to)
+        product_sales_query = product_sales_query.filter(models.Invoice.invoice_date <= date_to)
     selected_market = market_id or category_id
     if selected_market:
-        q = q.filter(models.Product.category_id == selected_market)
+        product_sales_query = product_sales_query.filter(models.Product.category_id == selected_market)
     if delivery_type:
-        q = q.filter(models.Invoice.delivery_type == delivery_type)
+        product_sales_query = product_sales_query.filter(models.Invoice.delivery_type == delivery_type)
     if payment_term:
-        q = q.filter(models.Invoice.payment_term == payment_term)
+        product_sales_query = product_sales_query.filter(models.Invoice.payment_term == payment_term)
 
     rows = (
-        q.group_by(models.Product.id, models.Product.product_name)
+        product_sales_query.group_by(models.Product.id, models.Product.product_name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
         .limit(limit)
         .all()
     )
     return [
         {
-            "product_id": r.id,
-            "product_name": r.product_name,
-            "total_qty": float(r.total_qty),
-            "total_revenue": float(r.total_revenue),
-            "unique_customers": r.unique_customers,
-            "total_invoices": r.total_invoices,
+            "product_id": product_row.id,
+            "product_name": product_row.product_name,
+            "total_qty": float(product_row.total_qty),
+            "total_revenue": float(product_row.total_revenue),
+            "unique_customers": product_row.unique_customers,
+            "total_invoices": product_row.total_invoices,
         }
-        for r in rows
+        for product_row in rows
     ]
 
 
@@ -540,14 +555,14 @@ def comprehensive_stats(
     selected_market = market_id or category_id
     market_invoice_ids = _invoice_ids_for_market(db, selected_market)
     # ── Quotation stats ────────────────────────────────────────────────────────
-    q_base = db.query(models.Quotation)
+    quotation_base_query = db.query(models.Quotation)
     if date_from:
-        q_base = q_base.filter(models.Quotation.quotation_date >= date_from)
+        quotation_base_query = quotation_base_query.filter(models.Quotation.quotation_date >= date_from)
     if date_to:
-        q_base = q_base.filter(models.Quotation.quotation_date <= date_to)
+        quotation_base_query = quotation_base_query.filter(models.Quotation.quotation_date <= date_to)
 
     quot_status_rows = (
-        q_base.with_entities(
+        quotation_base_query.with_entities(
             models.Quotation.status,
             func.count(models.Quotation.id).label("cnt"),
             func.sum(models.Quotation.total_amount).label("total_amount"),
@@ -555,17 +570,17 @@ def comprehensive_stats(
         .group_by(models.Quotation.status)
         .all()
     )
-    qmap: dict = {}
-    for r in quot_status_rows:
-        qmap[r.status.value] = {"cnt": r.cnt, "total_amount": float(r.total_amount or 0)}
+    quotation_stats_by_status: dict = {}
+    for quotation_status_row in quot_status_rows:
+        quotation_stats_by_status[quotation_status_row.status.value] = {"cnt": quotation_status_row.cnt, "total_amount": float(quotation_status_row.total_amount or 0)}
 
-    q_total     = sum(v["cnt"] for v in qmap.values())
-    q_draft     = qmap.get("draft", {}).get("cnt", 0)
-    q_pending   = qmap.get("pending_approval", {}).get("cnt", 0)
-    q_approved  = qmap.get("approved", {}).get("cnt", 0)
-    q_rejected  = qmap.get("rejected", {}).get("cnt", 0)
-    q_converted = qmap.get("converted", {}).get("cnt", 0)
-    q_total_amount = sum(v["total_amount"] for v in qmap.values())
+    q_total     = sum(status_stats["cnt"] for status_stats in quotation_stats_by_status.values())
+    q_draft     = quotation_stats_by_status.get("draft", {}).get("cnt", 0)
+    q_pending   = quotation_stats_by_status.get("pending_approval", {}).get("cnt", 0)
+    q_approved  = quotation_stats_by_status.get("approved", {}).get("cnt", 0)
+    q_rejected  = quotation_stats_by_status.get("rejected", {}).get("cnt", 0)
+    q_converted = quotation_stats_by_status.get("converted", {}).get("cnt", 0)
+    q_total_amount = sum(status_stats["total_amount"] for status_stats in quotation_stats_by_status.values())
     submitted   = q_pending + q_approved + q_rejected + q_converted
     approval_r  = round((q_approved + q_converted) / submitted * 100, 2) if submitted else 0
     rejection_r = round(q_rejected / submitted * 100, 2) if submitted else 0
@@ -581,16 +596,16 @@ def comprehensive_stats(
     )
 
     # ── Invoice stats ──────────────────────────────────────────────────────────
-    i_base = db.query(models.Invoice)
+    invoice_base_query = db.query(models.Invoice)
     if date_from:
-        i_base = i_base.filter(models.Invoice.invoice_date >= date_from)
+        invoice_base_query = invoice_base_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
-        i_base = i_base.filter(models.Invoice.invoice_date <= date_to)
+        invoice_base_query = invoice_base_query.filter(models.Invoice.invoice_date <= date_to)
     if market_invoice_ids is not None:
-        i_base = i_base.filter(models.Invoice.id.in_(market_invoice_ids))
+        invoice_base_query = invoice_base_query.filter(models.Invoice.id.in_(market_invoice_ids))
 
     inv_status_rows = (
-        i_base.with_entities(
+        invoice_base_query.with_entities(
             models.Invoice.status,
             func.count(models.Invoice.id).label("cnt"),
             func.sum(models.Invoice.total_amount).label("billed"),
@@ -599,24 +614,24 @@ def comprehensive_stats(
         .group_by(models.Invoice.status)
         .all()
     )
-    imap: dict = {}
-    for r in inv_status_rows:
-        imap[r.status.value] = {
-            "cnt": r.cnt,
-            "billed": float(r.billed or 0),
-            "collected": float(r.collected or 0),
+    invoice_stats_by_status: dict = {}
+    for invoice_status_row in inv_status_rows:
+        invoice_stats_by_status[invoice_status_row.status.value] = {
+            "cnt": invoice_status_row.cnt,
+            "billed": float(invoice_status_row.billed or 0),
+            "collected": float(invoice_status_row.collected or 0),
         }
 
-    i_total     = sum(v["cnt"] for v in imap.values())
-    i_active    = imap.get("active", {}).get("cnt", 0)
-    i_partial   = imap.get("partially_paid", {}).get("cnt", 0)
-    i_paid      = imap.get("paid", {}).get("cnt", 0) + imap.get("completed", {}).get("cnt", 0)
-    i_cancelled = imap.get("cancelled", {}).get("cnt", 0)
+    i_total     = sum(status_stats["cnt"] for status_stats in invoice_stats_by_status.values())
+    i_active    = invoice_stats_by_status.get("active", {}).get("cnt", 0)
+    i_partial   = invoice_stats_by_status.get("partially_paid", {}).get("cnt", 0)
+    i_paid      = invoice_stats_by_status.get("paid", {}).get("cnt", 0) + invoice_stats_by_status.get("completed", {}).get("cnt", 0)
+    i_cancelled = invoice_stats_by_status.get("cancelled", {}).get("cnt", 0)
     non_cancelled= i_total - i_cancelled
     paid_rate_v = round(i_paid / non_cancelled * 100, 2) if non_cancelled else 0
     cancel_rate_v= round(i_cancelled / i_total * 100, 2) if i_total else 0
-    total_billed = sum(v["billed"]    for k, v in imap.items() if k != "cancelled")
-    total_coll   = sum(v["collected"] for k, v in imap.items() if k != "cancelled")
+    total_billed = sum(status_stats["billed"] for status_name, status_stats in invoice_stats_by_status.items() if status_name != "cancelled")
+    total_coll   = sum(status_stats["collected"] for status_name, status_stats in invoice_stats_by_status.items() if status_name != "cancelled")
     total_out    = total_billed - total_coll
     coll_rate    = round(total_coll / total_billed * 100, 2) if total_billed else 0
 
@@ -640,19 +655,19 @@ def comprehensive_stats(
     if market_invoice_ids is not None:
         pay_rows = pay_rows.filter(models.Invoice.id.in_(market_invoice_ids))
     pay_rows = pay_rows.group_by(models.Payment.status).all()
-    pmap: dict = {
-        r.status.value: {"cnt": r.cnt, "total": float(r.total or 0)}
-        for r in pay_rows
+    payment_stats_by_status: dict = {
+        payment_row.status.value: {"cnt": payment_row.cnt, "total": float(payment_row.total or 0)}
+        for payment_row in pay_rows
     }
     pay_stats = schemas.PaymentStats(
-        total=sum(v["cnt"] for v in pmap.values()),
-        pending=pmap.get("pending", {}).get("cnt", 0),
-        confirmed=pmap.get("confirmed", {}).get("cnt", 0),
-        voided=pmap.get("voided", {}).get("cnt", 0),
-        failed=pmap.get("failed", {}).get("cnt", 0),
-        total_amount=sum(v["total"] for v in pmap.values()),
-        confirmed_amount=pmap.get("confirmed", {}).get("total", 0),
-        pending_amount=pmap.get("pending", {}).get("total", 0),
+        total=sum(status_stats["cnt"] for status_stats in payment_stats_by_status.values()),
+        pending=payment_stats_by_status.get("pending", {}).get("cnt", 0),
+        confirmed=payment_stats_by_status.get("confirmed", {}).get("cnt", 0),
+        voided=payment_stats_by_status.get("voided", {}).get("cnt", 0),
+        failed=payment_stats_by_status.get("failed", {}).get("cnt", 0),
+        total_amount=sum(status_stats["total"] for status_stats in payment_stats_by_status.values()),
+        confirmed_amount=payment_stats_by_status.get("confirmed", {}).get("total", 0),
+        pending_amount=payment_stats_by_status.get("pending", {}).get("total", 0),
     )
 
     # ── Per-sales-person stats (2 batch queries instead of N*2) ───────────────
@@ -689,22 +704,22 @@ def comprehensive_stats(
         models.Invoice.created_by, models.Invoice.status
     ).all()
 
-    uqm: dict = defaultdict(dict)
-    for r in uq_all:
-        uqm[r.created_by][r.status.value] = r.cnt
+    quotation_counts_by_user: dict = defaultdict(dict)
+    for quotation_summary_row in uq_all:
+        quotation_counts_by_user[quotation_summary_row.created_by][quotation_summary_row.status.value] = quotation_summary_row.cnt
 
-    uim: dict = defaultdict(dict)
-    for r in ui_all:
-        uim[r.created_by][r.status.value] = {
-            "cnt": r.cnt,
-            "billed": float(r.billed or 0),
-            "collected": float(r.collected or 0),
+    invoice_amounts_by_user: dict = defaultdict(dict)
+    for invoice_summary_row in ui_all:
+        invoice_amounts_by_user[invoice_summary_row.created_by][invoice_summary_row.status.value] = {
+            "cnt": invoice_summary_row.cnt,
+            "billed": float(invoice_summary_row.billed or 0),
+            "collected": float(invoice_summary_row.collected or 0),
         }
 
     by_sales: list = []
     for u in all_users:
-        uqmap = uqm[u.id]
-        uimap = uim[u.id]
+        uqmap = quotation_counts_by_user[u.id]
+        uimap = invoice_amounts_by_user[u.id]
         uq_total   = sum(uqmap.values())
         uq_draft   = uqmap.get("draft", 0)
         uq_pending = uqmap.get("pending_approval", 0)
@@ -768,14 +783,14 @@ def comprehensive_stats(
         .all()
     )
 
-    mgr_map: dict = {}
-    for r in manager_rows:
-        if r.id not in mgr_map:
-            mgr_map[r.id] = {
-                "full_name": r.full_name, "username": r.username, "statuses": {}
+    manager_stats_map: dict = {}
+    for manager_status_row in manager_rows:
+        if manager_status_row.id not in manager_stats_map:
+            manager_stats_map[manager_status_row.id] = {
+                "full_name": manager_status_row.full_name, "username": manager_status_row.username, "statuses": {}
             }
-        mgr_map[r.id]["statuses"][r.status.value] = {
-            "cnt": r.cnt, "total_amount": float(r.total_amount or 0)
+        manager_stats_map[manager_status_row.id]["statuses"][manager_status_row.status.value] = {
+            "cnt": manager_status_row.cnt, "total_amount": float(manager_status_row.total_amount or 0)
         }
 
     # Top sales people per manager (batch: one query for all managers)
@@ -788,7 +803,7 @@ def comprehensive_stats(
         )
         .join(models.User, models.User.id == models.Quotation.created_by)
         .filter(
-            models.Quotation.approved_by.in_(list(mgr_map.keys())),
+            models.Quotation.approved_by.in_(list(manager_stats_map.keys())),
             models.Quotation.status.in_([
                 models.QuotationStatus.approved,
                 models.QuotationStatus.converted,
@@ -799,13 +814,13 @@ def comprehensive_stats(
         .all()
     )
     top_sales_by_mgr: dict = defaultdict(list)
-    for r in top_sales_rows:
-        top_sales_by_mgr[r.approved_by].append(
-            {"name": r.full_name, "count": r.cnt, "value": float(r.total_amount)}
+    for top_sales_row in top_sales_rows:
+        top_sales_by_mgr[top_sales_row.approved_by].append(
+            {"name": top_sales_row.full_name, "count": top_sales_row.cnt, "value": float(top_sales_row.total_amount)}
         )
 
     by_manager: list = []
-    for uid, m in mgr_map.items():
+    for uid, m in manager_stats_map.items():
         s = m["statuses"]
         approved_cnt = s.get("approved", {}).get("cnt", 0) + s.get("converted", {}).get("cnt", 0)
         rejected_cnt = s.get("rejected", {}).get("cnt", 0)
@@ -825,7 +840,7 @@ def comprehensive_stats(
     by_manager.sort(key=lambda x: x.revenue_approved, reverse=True)
 
     # ── Revenue by role ────────────────────────────────────────────────────────
-    role_q = (
+    revenue_by_role_query = (
         db.query(
             models.User.role,
             func.sum(models.Invoice.total_amount).label("total"),
@@ -834,16 +849,16 @@ def comprehensive_stats(
         .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     )
     if date_from:
-        role_q = role_q.filter(models.Invoice.invoice_date >= date_from)
+        revenue_by_role_query = revenue_by_role_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
-        role_q = role_q.filter(models.Invoice.invoice_date <= date_to)
+        revenue_by_role_query = revenue_by_role_query.filter(models.Invoice.invoice_date <= date_to)
     if market_invoice_ids is not None:
-        role_q = role_q.filter(models.Invoice.id.in_(market_invoice_ids))
-    role_rows = role_q.group_by(models.User.role).all()
-    revenue_by_role = {r.role.value: float(r.total or 0) for r in role_rows}
+        revenue_by_role_query = revenue_by_role_query.filter(models.Invoice.id.in_(market_invoice_ids))
+    role_rows = revenue_by_role_query.group_by(models.User.role).all()
+    revenue_by_role = {role_row.role.value: float(role_row.total or 0) for role_row in role_rows}
 
     # ── Top customers + products (all-time or filtered) ────────────────────────
-    tc_q = (
+    top_customers_query = (
         db.query(
             models.Customer.id, models.Customer.customer_name,
             func.count(func.distinct(models.Invoice.id)).label("orders"),
@@ -854,18 +869,18 @@ def comprehensive_stats(
         .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     )
     if date_from:
-        tc_q = tc_q.filter(models.Invoice.invoice_date >= date_from)
+        top_customers_query = top_customers_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
-        tc_q = tc_q.filter(models.Invoice.invoice_date <= date_to)
+        top_customers_query = top_customers_query.filter(models.Invoice.invoice_date <= date_to)
     if market_invoice_ids is not None:
-        tc_q = tc_q.filter(models.Invoice.id.in_(market_invoice_ids))
+        top_customers_query = top_customers_query.filter(models.Invoice.id.in_(market_invoice_ids))
     top_cust_rows = (
-        tc_q.group_by(models.Customer.id, models.Customer.customer_name)
+        top_customers_query.group_by(models.Customer.id, models.Customer.customer_name)
         .order_by(func.sum(models.Invoice.total_amount).desc())
         .limit(20).all()
     )
 
-    tprod_q = (
+    top_products_query = (
         db.query(
             models.Product.id, models.Product.product_name,
             func.sum(models.InvoiceItem.quantity).label("qty"),
@@ -877,13 +892,13 @@ def comprehensive_stats(
         .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     )
     if date_from:
-        tprod_q = tprod_q.filter(models.Invoice.invoice_date >= date_from)
+        top_products_query = top_products_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
-        tprod_q = tprod_q.filter(models.Invoice.invoice_date <= date_to)
+        top_products_query = top_products_query.filter(models.Invoice.invoice_date <= date_to)
     if selected_market:
-        tprod_q = tprod_q.filter(models.Product.category_id == selected_market)
+        top_products_query = top_products_query.filter(models.Product.category_id == selected_market)
     top_prod_rows = (
-        tprod_q.group_by(models.Product.id, models.Product.product_name)
+        top_products_query.group_by(models.Product.id, models.Product.product_name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
         .limit(20).all()
     )
@@ -897,22 +912,22 @@ def comprehensive_stats(
         revenue_by_role=revenue_by_role,
         top_customers_revenue=[
             {
-                "customer_id": r.id, "customer_name": r.customer_name,
-                "orders": r.orders, "billed": float(r.billed),
-                "collected": float(r.collected),
-                "outstanding": float(r.billed) - float(r.collected),
+                "customer_id": customer_row.id, "customer_name": customer_row.customer_name,
+                "orders": customer_row.orders, "billed": float(customer_row.billed),
+                "collected": float(customer_row.collected),
+                "outstanding": float(customer_row.billed) - float(customer_row.collected),
                 "collection_rate": round(
-                    float(r.collected) / float(r.billed) * 100, 1
-                ) if r.billed else 0,
+                    float(customer_row.collected) / float(customer_row.billed) * 100, 1
+                ) if customer_row.billed else 0,
             }
-            for r in top_cust_rows
+            for customer_row in top_cust_rows
         ],
         top_products_revenue=[
             {
-                "product_id": r.id, "product_name": r.product_name,
-                "qty": float(r.qty), "revenue": float(r.revenue),
-                "customers": r.customers,
+                "product_id": product_row.id, "product_name": product_row.product_name,
+                "qty": float(product_row.qty), "revenue": float(product_row.revenue),
+                "customers": product_row.customers,
             }
-            for r in top_prod_rows
+            for product_row in top_prod_rows
         ],
     )

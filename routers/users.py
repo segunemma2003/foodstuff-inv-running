@@ -21,12 +21,12 @@ def list_users(
     db: Session = Depends(get_db),
     _: models.User = Depends(require_admin_or_manager),
 ):
-    q = db.query(models.User)
+    user_query = db.query(models.User)
     if role:
-        q = q.filter(models.User.role == role)
+        user_query = user_query.filter(models.User.role == role)
     if is_active is not None:
-        q = q.filter(models.User.is_active == is_active)
-    return q.offset(skip).limit(limit).all()
+        user_query = user_query.filter(models.User.is_active == is_active)
+    return user_query.offset(skip).limit(limit).all()
 
 
 @router.post("", response_model=schemas.UserOut, status_code=201)
