@@ -285,40 +285,33 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
 
         for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             data = dict(zip(headers, row))
-            sku = (data.get("sku") or "").strip() if isinstance(data.get("sku"), str) else data.get("sku")
             product_name = (data.get("product_name") or "").strip() if isinstance(data.get("product_name"), str) else data.get("product_name")
             market_name = (data.get("market_name") or "").strip() if isinstance(data.get("market_name"), str) else data.get("market_name")
+            uom = data.get("uom") or data.get("unit_of_measure")
+            uom = (uom or "").strip() if isinstance(uom, str) else uom
             cost_price = data.get("cost_price")
 
-            if cost_price is None or (not sku and not product_name):
-                errors.append(f"Row {row_num}: provide sku or product_name, and cost_price")
+            if cost_price is None or not product_name or not market_name or not uom:
+                errors.append(f"Row {row_num}: required columns are product_name, uom, market_name, cost_price")
                 continue
-            product = None
-            if sku:
-                product = db.query(models.Product).filter(models.Product.sku == sku).first()
-                if not product:
-                    errors.append(f"Row {row_num}: SKU '{sku}' not found")
-                    continue
-            else:
-                pq = db.query(models.Product).filter(
-                    func.lower(models.Product.product_name) == str(product_name).strip().lower()
+
+            market = db.query(models.ProductCategory).filter(
+                func.lower(models.ProductCategory.name) == str(market_name).strip().lower()
+            ).first()
+            if not market:
+                errors.append(f"Row {row_num}: market '{market_name}' not found")
+                continue
+
+            product = db.query(models.Product).filter(
+                func.lower(models.Product.product_name) == str(product_name).strip().lower(),
+                models.Product.category_id == market.id,
+                func.lower(func.coalesce(models.Product.unit_of_measure, "")) == str(uom).strip().lower(),
+            ).first()
+            if not product:
+                errors.append(
+                    f"Row {row_num}: product '{product_name}' with uom '{uom}' not found in market '{market_name}'"
                 )
-                if market_name:
-                    market = db.query(models.ProductCategory).filter(
-                        func.lower(models.ProductCategory.name) == market_name.lower()
-                    ).first()
-                    if not market:
-                        errors.append(f"Row {row_num}: market '{market_name}' not found")
-                        continue
-                    pq = pq.filter(models.Product.category_id == market.id)
-                matches = pq.all()
-                if not matches:
-                    errors.append(f"Row {row_num}: product '{product_name}' not found")
-                    continue
-                if len(matches) > 1:
-                    errors.append(f"Row {row_num}: product '{product_name}' is ambiguous; include sku or market_name")
-                    continue
-                product = matches[0]
+                continue
 
             db.add(models.CostPrice(
                 product_id=product.id,

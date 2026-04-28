@@ -101,8 +101,7 @@ async def bulk_upload_cost_prices(
     Upload an Excel file to S3 and queue parsing via Celery.
     Returns a task_id immediately (< 50 ms). Poll /api/v1/jobs/{task_id} for result.
 
-    Required columns: cost_price + (sku or product_name)
-    Optional:         market_name (recommended when product name exists in multiple markets)
+    Required columns: product_name, uom, market_name, cost_price
     Effective date is applied immediately (today).
     """
     import uuid
@@ -127,8 +126,8 @@ def download_template(_: models.User = Depends(get_current_user)):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Cost Prices"
-    ws.append(["product_name", "sku", "market_name", "cost_price"])
-    ws.append(["Rice 50kg", "RICE-001", "Abuja", 100000])
+    ws.append(["product_name", "uom", "market_name", "cost_price"])
+    ws.append(["Rice 50kg", "Bag", "Abuja", 100000])
 
     buf = BytesIO()
     wb.save(buf)
