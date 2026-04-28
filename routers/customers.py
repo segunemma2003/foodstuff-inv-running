@@ -232,7 +232,8 @@ def customer_analytics(
         # Backward compatibility: older rows/environments may return plain string.
         pref_dt = raw_delivery.value if hasattr(raw_delivery, "value") else str(raw_delivery)
 
-    base = schemas.CustomerOut.model_validate(c).model_dump()
+    # Avoid duplicate keyword collision; last_order_date is set explicitly below.
+    base = schemas.CustomerOut.model_validate(c).model_dump(exclude={"last_order_date"})
     return schemas.CustomerDetailOut(
         **base,
         total_sales_value=total_value,
