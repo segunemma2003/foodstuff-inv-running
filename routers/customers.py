@@ -176,13 +176,14 @@ def customer_analytics(
         models.Invoice.status != models.InvoiceStatus.cancelled,
     ]
 
-    # Aggregate invoice-level stats in one query
+    # Aggregate invoice/item stats in one query using line totals (source of truth).
     inv_agg = (
         db.query(
-            func.count(models.Invoice.id).label("num_orders"),
-            func.sum(models.Invoice.total_amount).label("total_value"),
+            func.count(func.distinct(models.Invoice.id)).label("num_orders"),
+            func.sum(models.InvoiceItem.line_total).label("total_value"),
             func.max(models.Invoice.invoice_date).label("last_order"),
         )
+        .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
         .filter(*base_filter)
         .one()
     )

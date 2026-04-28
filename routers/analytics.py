@@ -78,7 +78,7 @@ def sales_analytics(
     product_invoice_ids_subquery = _invoice_ids_for_product(db, product_id)
 
     filtered_invoice_query = _inv_filters(
-        db.query(models.Invoice.id), date_from, date_to,
+        db.query(models.Invoice.id.label("invoice_id")), date_from, date_to,
         delivery_type, payment_term, staff_id, customer_id,
     )
     if market_invoice_ids_subquery is not None:
@@ -87,14 +87,16 @@ def sales_analytics(
         filtered_invoice_query = filtered_invoice_query.filter(models.Invoice.id.in_(product_invoice_ids_subquery))
     filtered_invoice_ids_subquery = filtered_invoice_query.distinct().subquery()
 
+    filtered_invoice_ids_select = db.query(filtered_invoice_ids_subquery.c.invoice_id)
+
     total_invoice_count = (
         db.query(func.count(func.distinct(models.Invoice.id)))
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
         .scalar() or 0
     )
     total_sales_value = (
         db.query(func.sum(models.InvoiceItem.line_total))
-        .filter(models.InvoiceItem.invoice_id.in_(filtered_invoice_ids_subquery))
+        .filter(models.InvoiceItem.invoice_id.in_(filtered_invoice_ids_select))
         .scalar() or 0
     )
 
@@ -116,7 +118,7 @@ def sales_analytics(
         )
         .join(models.Invoice, models.Invoice.customer_id == models.Customer.id)
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
         .group_by(models.Customer.id, models.Customer.customer_name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
         .limit(10)
@@ -132,7 +134,7 @@ def sales_analytics(
         )
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
     )
     if selected_market_id:
         top_products_query = top_products_query.filter(models.Product.category_id == selected_market_id)
@@ -155,7 +157,7 @@ def sales_analytics(
         .join(models.Product, models.Product.category_id == models.ProductCategory.id)
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
     )
     if selected_market_id:
         top_markets_query = top_markets_query.filter(models.Product.category_id == selected_market_id)
@@ -173,7 +175,7 @@ def sales_analytics(
             func.sum(models.InvoiceItem.line_total).label("t"),
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
         .group_by(models.Invoice.delivery_type)
         .all()
     )
@@ -184,7 +186,7 @@ def sales_analytics(
             func.sum(models.InvoiceItem.line_total).label("t"),
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
         .group_by(models.Invoice.payment_term)
         .all()
     )
@@ -198,7 +200,7 @@ def sales_analytics(
         )
         .join(models.Invoice, models.Invoice.created_by == models.User.id)
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
         .group_by(models.User.id, models.User.full_name)
         .all()
     )
@@ -214,7 +216,7 @@ def sales_analytics(
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
         .filter(
-            models.Invoice.id.in_(filtered_invoice_ids_subquery),
+            models.Invoice.id.in_(filtered_invoice_ids_select),
             models.Invoice.invoice_date >= trend_start_date,
             models.Invoice.invoice_date <= trend_end_date,
         )
@@ -231,7 +233,7 @@ def sales_analytics(
             func.count(func.distinct(models.Invoice.id)).label("count"),
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
-        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_select))
         .group_by("year", "month")
         .order_by("year", "month")
         .all()
@@ -548,14 +550,14 @@ def comprehensive_stats(
         q_base.with_entities(
             models.Quotation.status,
             func.count(models.Quotation.id).label("cnt"),
-            func.sum(models.Quotation.total_amount).label("val"),
+            func.sum(models.Quotation.total_amount).label("total_amount"),
         )
         .group_by(models.Quotation.status)
         .all()
     )
     qmap: dict = {}
     for r in quot_status_rows:
-        qmap[r.status.value] = {"cnt": r.cnt, "val": float(r.val or 0)}
+        qmap[r.status.value] = {"cnt": r.cnt, "total_amount": float(r.total_amount or 0)}
 
     q_total     = sum(v["cnt"] for v in qmap.values())
     q_draft     = qmap.get("draft", {}).get("cnt", 0)
@@ -563,7 +565,7 @@ def comprehensive_stats(
     q_approved  = qmap.get("approved", {}).get("cnt", 0)
     q_rejected  = qmap.get("rejected", {}).get("cnt", 0)
     q_converted = qmap.get("converted", {}).get("cnt", 0)
-    q_total_val = sum(v["val"] for v in qmap.values())
+    q_total_amount = sum(v["total_amount"] for v in qmap.values())
     submitted   = q_pending + q_approved + q_rejected + q_converted
     approval_r  = round((q_approved + q_converted) / submitted * 100, 2) if submitted else 0
     rejection_r = round(q_rejected / submitted * 100, 2) if submitted else 0
@@ -575,7 +577,7 @@ def comprehensive_stats(
         total=q_total, draft=q_draft, pending_approval=q_pending,
         approved=q_approved, rejected=q_rejected, converted=q_converted,
         approval_rate=approval_r, rejection_rate=rejection_r,
-        conversion_rate=conv_r, total_value=q_total_val,
+        conversion_rate=conv_r, total_value=q_total_amount,
     )
 
     # ── Invoice stats ──────────────────────────────────────────────────────────
@@ -751,7 +753,7 @@ def comprehensive_stats(
             models.User.id, models.User.full_name, models.User.username,
             models.Quotation.status,
             func.count(models.Quotation.id).label("cnt"),
-            func.sum(models.Quotation.total_amount).label("val"),
+            func.sum(models.Quotation.total_amount).label("total_amount"),
         )
         .join(models.Quotation, models.Quotation.approved_by == models.User.id)
         .filter(models.Quotation.status.in_([
@@ -773,7 +775,7 @@ def comprehensive_stats(
                 "full_name": r.full_name, "username": r.username, "statuses": {}
             }
         mgr_map[r.id]["statuses"][r.status.value] = {
-            "cnt": r.cnt, "val": float(r.val or 0)
+            "cnt": r.cnt, "total_amount": float(r.total_amount or 0)
         }
 
     # Top sales people per manager (batch: one query for all managers)
@@ -782,7 +784,7 @@ def comprehensive_stats(
             models.Quotation.approved_by,
             models.User.full_name,
             func.count(models.Quotation.id).label("cnt"),
-            func.sum(models.Quotation.total_amount).label("val"),
+            func.sum(models.Quotation.total_amount).label("total_amount"),
         )
         .join(models.User, models.User.id == models.Quotation.created_by)
         .filter(
@@ -799,7 +801,7 @@ def comprehensive_stats(
     top_sales_by_mgr: dict = defaultdict(list)
     for r in top_sales_rows:
         top_sales_by_mgr[r.approved_by].append(
-            {"name": r.full_name, "count": r.cnt, "value": float(r.val)}
+            {"name": r.full_name, "count": r.cnt, "value": float(r.total_amount)}
         )
 
     by_manager: list = []
@@ -810,7 +812,7 @@ def comprehensive_stats(
         reviewed     = approved_cnt + rejected_cnt
         appr_r       = round(approved_cnt / reviewed * 100, 2) if reviewed else 0
         rej_r        = round(rejected_cnt / reviewed * 100, 2) if reviewed else 0
-        rev_approved = sum(v["val"] for k, v in s.items() if k in ("approved", "converted"))
+        rev_approved = sum(v["total_amount"] for k, v in s.items() if k in ("approved", "converted"))
 
         by_manager.append(schemas.ManagerStats(
             user_id=uid, full_name=m["full_name"], username=m["username"],
