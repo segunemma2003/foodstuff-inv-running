@@ -233,6 +233,7 @@ def list_products(
     category_id: Optional[int] = None,
     market_id: Optional[int] = None,
     is_active: Optional[bool] = None,
+    include_inactive: bool = False,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
@@ -245,8 +246,12 @@ def list_products(
     selected_market = market_id or category_id
     if selected_market:
         q = q.filter(models.Product.category_id == selected_market)
-    if is_active is not None:
-        q = q.filter(models.Product.is_active == is_active)
+    if include_inactive:
+        if is_active is not None:
+            q = q.filter(models.Product.is_active == is_active)
+    else:
+        # Default behavior across the app: only enabled products are visible.
+        q = q.filter(models.Product.is_active == True)
     products = q.order_by(models.Product.product_name).offset(skip).limit(limit).all()
     return [_enrich(p, db) for p in products]
 

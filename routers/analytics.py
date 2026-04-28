@@ -247,12 +247,12 @@ def sales_analytics(
         quotation_conversion_rate=round(conversion_rate, 2),
         average_invoice_value=round(avg_inv, 2),
         top_customers=[
-            {"customer_id": r.id, "customer_name": r.customer_name, "total": float(r.total)}
+            {"customer_id": r.id, "customer_name": r.customer_name, "total": float(r.total or 0)}
             for r in top_cust
         ],
         top_products=[
             {"product_id": r.id, "product_name": r.product_name,
-             "total": float(r.total), "qty": float(r.qty)}
+             "total": float(r.total or 0), "qty": float(r.qty or 0)}
             for r in top_prod
         ],
         top_markets=[
@@ -261,7 +261,7 @@ def sales_analytics(
                 "category_name": r.name,
                 "market_id": r.id,
                 "market_name": r.name,
-                "total": float(r.total),
+                "total": float(r.total or 0),
             }
             for r in top_cat
         ],
@@ -271,7 +271,7 @@ def sales_analytics(
                 "category_name": r.name,
                 "market_id": r.id,
                 "market_name": r.name,
-                "total": float(r.total),
+                "total": float(r.total or 0),
             }
             for r in top_cat
         ],
@@ -279,16 +279,16 @@ def sales_analytics(
         sales_by_payment_term={r.payment_term: float(r.t or 0) for r in pt_rows},
         sales_by_staff=[
             {"user_id": r.id, "full_name": r.full_name,
-             "total_sales": float(r.total), "invoice_count": r.count}
+             "total_sales": float(r.total or 0), "invoice_count": int(r.count or 0)}
             for r in staff_rows
         ],
         daily_trend=[
-            {"date": str(r.invoice_date), "total": float(r.total), "count": r.count}
+            {"date": str(r.invoice_date), "total": float(r.total or 0), "count": int(r.count or 0)}
             for r in daily
         ],
         monthly_trend=[
             {"year": int(r.year), "month": int(r.month),
-             "total": float(r.total), "count": r.count}
+             "total": float(r.total or 0), "count": int(r.count or 0)}
             for r in monthly
         ],
     )
