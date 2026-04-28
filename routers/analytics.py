@@ -44,6 +44,17 @@ def _invoice_ids_for_market(db: Session, market_id: Optional[int]):
     )
 
 
+def _invoice_ids_for_product(db: Session, product_id: Optional[int]):
+    if not product_id:
+        return None
+    return (
+        db.query(models.InvoiceItem.invoice_id)
+        .filter(models.InvoiceItem.product_id == product_id)
+        .distinct()
+        .subquery()
+    )
+
+
 @router.get("/sales", response_model=schemas.SalesAnalytics)
 def sales_analytics(
     date_from: Optional[date] = None,
@@ -60,6 +71,7 @@ def sales_analytics(
 ):
     selected_market = market_id or category_id
     market_invoice_ids = _invoice_ids_for_market(db, selected_market)
+    product_invoice_ids = _invoice_ids_for_product(db, product_id)
 
     # ── Core invoice query ────────────────────────────────────────────────────
     inv_q = _inv_filters(
@@ -68,6 +80,8 @@ def sales_analytics(
     )
     if market_invoice_ids is not None:
         inv_q = inv_q.filter(models.Invoice.id.in_(market_invoice_ids))
+    if product_invoice_ids is not None:
+        inv_q = inv_q.filter(models.Invoice.id.in_(product_invoice_ids))
     invoices = inv_q.all()
     total_value = sum(float(i.total_amount) for i in invoices)
     total_inv   = len(invoices)
@@ -89,9 +103,11 @@ def sales_analytics(
         )
         .join(models.Invoice, models.Invoice.customer_id == models.Customer.id)
     )
-    tc_q = _inv_filters(tc_q, date_from, date_to, delivery_type, payment_term, staff_id)
+    tc_q = _inv_filters(tc_q, date_from, date_to, delivery_type, payment_term, staff_id, customer_id)
     if market_invoice_ids is not None:
         tc_q = tc_q.filter(models.Invoice.id.in_(market_invoice_ids))
+    if product_invoice_ids is not None:
+        tc_q = tc_q.filter(models.Invoice.id.in_(product_invoice_ids))
     top_cust = (
         tc_q.group_by(models.Customer.id, models.Customer.customer_name)
         .order_by(func.sum(models.Invoice.total_amount).desc())
@@ -146,6 +162,8 @@ def sales_analytics(
     dt_q = _inv_filters(dt_q, date_from, date_to, None, payment_term, staff_id, customer_id)
     if market_invoice_ids is not None:
         dt_q = dt_q.filter(models.Invoice.id.in_(market_invoice_ids))
+    if product_invoice_ids is not None:
+        dt_q = dt_q.filter(models.Invoice.id.in_(product_invoice_ids))
     dt_rows = dt_q.group_by(models.Invoice.delivery_type).all()
 
     # ── Sales by payment term ─────────────────────────────────────────────────
@@ -156,6 +174,8 @@ def sales_analytics(
     pt_q = _inv_filters(pt_q, date_from, date_to, delivery_type, None, staff_id, customer_id)
     if market_invoice_ids is not None:
         pt_q = pt_q.filter(models.Invoice.id.in_(market_invoice_ids))
+    if product_invoice_ids is not None:
+        pt_q = pt_q.filter(models.Invoice.id.in_(product_invoice_ids))
     pt_rows = pt_q.group_by(models.Invoice.payment_term).all()
 
     # ── Sales by staff ────────────────────────────────────────────────────────
@@ -170,43 +190,34 @@ def sales_analytics(
     st_q = _inv_filters(st_q, date_from, date_to, delivery_type, payment_term, None, customer_id)
     if market_invoice_ids is not None:
         st_q = st_q.filter(models.Invoice.id.in_(market_invoice_ids))
+    if product_invoice_ids is not None:
+        st_q = st_q.filter(models.Invoice.id.in_(product_invoice_ids))
     staff_rows = st_q.group_by(models.User.id, models.User.full_name).all()
 
     # ── Daily trend (last 30 days or within date range) ───────────────────────
     daily_from = date_from or (date.today() - timedelta(days=30))
     daily_to   = date_to   or date.today()
-    daily = (
+    daily_q = (
         db.query(
             models.Invoice.invoice_date,
             func.sum(models.Invoice.total_amount).label("total"),
             func.count(models.Invoice.id).label("count"),
         )
-        .filter(
-            models.Invoice.status != models.InvoiceStatus.cancelled,
-            models.Invoice.invoice_date >= daily_from,
-            models.Invoice.invoice_date <= daily_to,
-        )
+    )
+    daily_q = _inv_filters(
+        daily_q, daily_from, daily_to,
+        delivery_type, payment_term, staff_id, customer_id,
+    )
+    if market_invoice_ids is not None:
+        daily_q = daily_q.filter(models.Invoice.id.in_(market_invoice_ids))
+    if product_invoice_ids is not None:
+        daily_q = daily_q.filter(models.Invoice.id.in_(product_invoice_ids))
+    daily = (
+        daily_q
         .group_by(models.Invoice.invoice_date)
         .order_by(models.Invoice.invoice_date)
         .all()
     )
-    if market_invoice_ids is not None:
-        daily = (
-            db.query(
-                models.Invoice.invoice_date,
-                func.sum(models.Invoice.total_amount).label("total"),
-                func.count(models.Invoice.id).label("count"),
-            )
-            .filter(
-                models.Invoice.status != models.InvoiceStatus.cancelled,
-                models.Invoice.invoice_date >= daily_from,
-                models.Invoice.invoice_date <= daily_to,
-                models.Invoice.id.in_(market_invoice_ids),
-            )
-            .group_by(models.Invoice.invoice_date)
-            .order_by(models.Invoice.invoice_date)
-            .all()
-        )
 
     # ── Monthly trend ─────────────────────────────────────────────────────────
     mon_q = db.query(
@@ -214,13 +225,15 @@ def sales_analytics(
         extract("month", models.Invoice.invoice_date).label("month"),
         func.sum(models.Invoice.total_amount).label("total"),
         func.count(models.Invoice.id).label("count"),
-    ).filter(models.Invoice.status != models.InvoiceStatus.cancelled)
-    if date_from:
-        mon_q = mon_q.filter(models.Invoice.invoice_date >= date_from)
-    if date_to:
-        mon_q = mon_q.filter(models.Invoice.invoice_date <= date_to)
+    )
+    mon_q = _inv_filters(
+        mon_q, date_from, date_to,
+        delivery_type, payment_term, staff_id, customer_id,
+    )
     if market_invoice_ids is not None:
         mon_q = mon_q.filter(models.Invoice.id.in_(market_invoice_ids))
+    if product_invoice_ids is not None:
+        mon_q = mon_q.filter(models.Invoice.id.in_(product_invoice_ids))
     monthly = mon_q.group_by("year", "month").order_by("year", "month").all()
 
     return schemas.SalesAnalytics(
@@ -594,7 +607,7 @@ def comprehensive_stats(
     i_total     = sum(v["cnt"] for v in imap.values())
     i_active    = imap.get("active", {}).get("cnt", 0)
     i_partial   = imap.get("partially_paid", {}).get("cnt", 0)
-    i_paid      = imap.get("paid", {}).get("cnt", 0)
+    i_paid      = imap.get("paid", {}).get("cnt", 0) + imap.get("completed", {}).get("cnt", 0)
     i_cancelled = imap.get("cancelled", {}).get("cnt", 0)
     non_cancelled= i_total - i_cancelled
     paid_rate_v = round(i_paid / non_cancelled * 100, 2) if non_cancelled else 0
@@ -702,7 +715,7 @@ def comprehensive_stats(
         ) if (uq_appr + uq_conv) else 0
 
         ui_total   = sum(v["cnt"] for v in uimap.values())
-        ui_paid    = uimap.get("paid", {}).get("cnt", 0)
+        ui_paid    = uimap.get("paid", {}).get("cnt", 0) + uimap.get("completed", {}).get("cnt", 0)
         ui_partial = uimap.get("partially_paid", {}).get("cnt", 0)
         ui_active  = uimap.get("active", {}).get("cnt", 0)
         ui_cancel  = uimap.get("cancelled", {}).get("cnt", 0)

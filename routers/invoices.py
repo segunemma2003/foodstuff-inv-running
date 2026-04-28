@@ -617,6 +617,8 @@ def cancel_invoice(
         raise HTTPException(404, "Invoice not found")
     if inv.status == models.InvoiceStatus.cancelled:
         raise HTTPException(400, "Invoice is already cancelled")
+    if inv.status == models.InvoiceStatus.completed:
+        raise HTTPException(400, "Completed invoice cannot be cancelled")
     inv.status = models.InvoiceStatus.cancelled
     audit.log(db, models.AuditAction.cancel, models.AuditEntity.invoice, inv.id,
                current_user.id, description=f"Cancelled invoice {inv.invoice_number}")

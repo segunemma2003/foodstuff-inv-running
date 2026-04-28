@@ -367,18 +367,29 @@ def process_product_bulk_task(self, s3_key: str, user_id: int, market_id: int | 
 
         for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             data = dict(zip(headers, row))
-            name = data.get("product_name")
+            name = (data.get("product_name") or "")
+            if isinstance(name, str):
+                name = name.strip()
             if not name:
                 continue
             sku = data.get("sku") or None
+            if isinstance(sku, str):
+                sku = sku.strip() or None
             if sku and db.query(models.Product).filter(models.Product.sku == sku).first():
                 errors.append(f"Row {row_num}: SKU '{sku}' already exists")
                 continue
-            market_name = data.get("market_name") or data.get("market") or data.get("category_name") or data.get("category")
+            market_name = (
+                data.get("market_name")
+                or data.get("market")
+                or data.get("category_name")
+                or data.get("category")
+            )
+            if isinstance(market_name, str):
+                market_name = market_name.strip()
             resolved_market_id = market_id
             if resolved_market_id is None and market_name:
                 cat = db.query(models.ProductCategory).filter(
-                    models.ProductCategory.name == market_name
+                    func.lower(models.ProductCategory.name) == str(market_name).strip().lower()
                 ).first()
                 if cat:
                     resolved_market_id = cat.id
@@ -387,6 +398,9 @@ def process_product_bulk_task(self, s3_key: str, user_id: int, market_id: int | 
                 continue
             if not sku:
                 sku = _generate_unique_sku(name, resolved_market_id)
+            unit_of_measure = data.get("unit_of_measure") or data.get("uom")
+            if isinstance(unit_of_measure, str):
+                unit_of_measure = unit_of_measure.strip() or None
             existing = db.query(models.Product).filter(
                 models.Product.category_id == resolved_market_id,
                 func.lower(models.Product.product_name) == str(name).strip().lower(),
@@ -394,14 +408,14 @@ def process_product_bulk_task(self, s3_key: str, user_id: int, market_id: int | 
             if existing:
                 if sku:
                     existing.sku = sku
-                if data.get("unit_of_measure"):
-                    existing.unit_of_measure = data.get("unit_of_measure")
+                if unit_of_measure:
+                    existing.unit_of_measure = unit_of_measure
                 updated += 1
             else:
                 db.add(models.Product(
                     product_name=name,
                     sku=sku,
-                    unit_of_measure=data.get("unit_of_measure"),
+                    unit_of_measure=unit_of_measure,
                     category_id=resolved_market_id,
                 ))
                 created += 1

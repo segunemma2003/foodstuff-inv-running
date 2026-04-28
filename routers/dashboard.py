@@ -27,7 +27,7 @@ def _sales_in_range(db: Session, start: date, end: date) -> float:
         .filter(
             models.Invoice.invoice_date >= start,
             models.Invoice.invoice_date <= end,
-            models.Invoice.status == models.InvoiceStatus.active,
+            models.Invoice.status != models.InvoiceStatus.cancelled,
         )
         .scalar()
     )
@@ -52,7 +52,7 @@ def overview(
     invoices_today = (
         db.query(func.count(models.Invoice.id))
         .filter(models.Invoice.invoice_date == today,
-                models.Invoice.status == models.InvoiceStatus.active)
+                models.Invoice.status != models.InvoiceStatus.cancelled)
         .scalar() or 0
     )
 
@@ -60,21 +60,21 @@ def overview(
     sales_week = _sales_in_range(db, week_start, today)
     sales_month = _sales_in_range(db, month_start, today)
 
-    # Cost of sales = sum(cost_price * quantity) for active invoices
+    # Cost of sales = sum(cost_price * quantity) for non-cancelled invoices
     cos_month = (
         db.query(func.sum(models.InvoiceItem.cost_price * models.InvoiceItem.quantity))
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
         .filter(
             models.Invoice.invoice_date >= month_start,
             models.Invoice.invoice_date <= today,
-            models.Invoice.status == models.InvoiceStatus.active,
+            models.Invoice.status != models.InvoiceStatus.cancelled,
         )
         .scalar() or 0
     )
     cos_all = (
         db.query(func.sum(models.InvoiceItem.cost_price * models.InvoiceItem.quantity))
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
         .scalar() or 0
     )
 
@@ -89,7 +89,7 @@ def overview(
         .join(models.Invoice)
         .filter(
             models.Invoice.invoice_date == today,
-            models.Invoice.status == models.InvoiceStatus.active,
+            models.Invoice.status != models.InvoiceStatus.cancelled,
         )
         .scalar() or 0
     )
@@ -102,7 +102,7 @@ def overview(
             func.sum(models.Invoice.total_amount).label("total"),
         )
         .join(models.Invoice, models.Invoice.customer_id == models.Customer.id)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
         .group_by(models.Customer.id, models.Customer.customer_name)
         .order_by(func.sum(models.Invoice.total_amount).desc())
         .limit(5)
@@ -118,7 +118,7 @@ def overview(
         )
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
         .group_by(models.Product.id, models.Product.product_name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
         .limit(5)
@@ -128,7 +128,7 @@ def overview(
     # Delivery vs pickup
     delivery_rows = (
         db.query(models.Invoice.delivery_type, func.sum(models.Invoice.total_amount).label("total"))
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
         .group_by(models.Invoice.delivery_type)
         .all()
     )
@@ -137,7 +137,7 @@ def overview(
     # Sales by payment term
     pt_rows = (
         db.query(models.Invoice.payment_term, func.sum(models.Invoice.total_amount).label("total"))
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
         .group_by(models.Invoice.payment_term)
         .all()
     )
@@ -146,7 +146,7 @@ def overview(
     # Recent
     recent_invoices = (
         db.query(models.Invoice)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
         .order_by(models.Invoice.created_at.desc())
         .limit(5)
         .all()
@@ -232,7 +232,7 @@ def cost_of_sales_detail(
         )
         .join(models.Product, models.Product.id == models.InvoiceItem.product_id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     )
     if date_from:
         item_q = item_q.filter(models.Invoice.invoice_date >= date_from)
@@ -265,7 +265,7 @@ def cost_of_sales_detail(
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
         .join(models.Customer, models.Customer.id == models.Invoice.customer_id)
-        .filter(models.Invoice.status == models.InvoiceStatus.active)
+        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
     )
     if date_from:
         inv_q = inv_q.filter(models.Invoice.invoice_date >= date_from)
