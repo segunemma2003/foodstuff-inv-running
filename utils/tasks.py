@@ -288,6 +288,10 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 return ""
             return " ".join(str(val).strip().lower().split())
 
+        def _norm_key(val):
+            import re
+            return re.sub(r"[^a-z0-9]+", "", _norm(val))
+
         for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             data = dict(zip(headers, row))
             product_name = (data.get("product_name") or "").strip() if isinstance(data.get("product_name"), str) else data.get("product_name")
@@ -321,6 +325,13 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                     func.lower(func.trim(models.Product.product_name)) == _norm(product_name),
                     models.Product.category_id == market.id,
                 ).all()
+                if not by_name:
+                    # Last-resort tolerant name match (ignores spaces/punctuation like "50kg" vs "50 kg")
+                    candidates = db.query(models.Product).filter(
+                        models.Product.category_id == market.id
+                    ).all()
+                    target_key = _norm_key(product_name)
+                    by_name = [p for p in candidates if _norm_key(p.product_name) == target_key]
                 if len(by_name) == 1:
                     product = by_name[0]
                 elif len(by_name) > 1:

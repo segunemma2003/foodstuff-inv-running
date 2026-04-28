@@ -14,6 +14,10 @@ import schemas
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 
+def _enum_or_str_value(v):
+    return v.value if hasattr(v, "value") else str(v)
+
+
 def _inv_filters(q, date_from, date_to, delivery_type=None, payment_term=None,
                  staff_id=None, customer_id=None):
     q = q.filter(models.Invoice.status != models.InvoiceStatus.cancelled)
@@ -271,7 +275,7 @@ def sales_analytics(
             }
             for r in top_cat
         ],
-        sales_by_delivery_type={r.delivery_type.value: float(r.t or 0) for r in dt_rows},
+        sales_by_delivery_type={_enum_or_str_value(r.delivery_type): float(r.t or 0) for r in dt_rows},
         sales_by_payment_term={r.payment_term: float(r.t or 0) for r in pt_rows},
         sales_by_staff=[
             {"user_id": r.id, "full_name": r.full_name,
