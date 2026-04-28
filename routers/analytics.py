@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, extract, case
+from sqlalchemy import func, extract, case, String
 
 from database import get_db
 from dependencies import get_current_user
@@ -20,7 +20,9 @@ def _enum_or_str_value(v):
 
 def _inv_filters(invoice_query, date_from, date_to, delivery_type=None, payment_term=None,
                  staff_id=None, customer_id=None):
-    invoice_query = invoice_query.filter(models.Invoice.status != models.InvoiceStatus.cancelled)
+    # Cast enum/text status to string for robust cross-environment matching.
+    invoice_status_text = func.lower(models.Invoice.status.cast(String))
+    invoice_query = invoice_query.filter(invoice_status_text != "cancelled")
     if date_from:
         invoice_query = invoice_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
@@ -289,8 +291,14 @@ def sales_analytics(
             }
             for market_row in top_markets_rows
         ],
-        sales_by_delivery_type={_enum_or_str_value(delivery_row.delivery_type): float(delivery_row.t or 0) for delivery_row in delivery_split_rows},
-        sales_by_payment_term={payment_term_row.payment_term: float(payment_term_row.t or 0) for payment_term_row in payment_term_split_rows},
+        sales_by_delivery_type={
+            (_enum_or_str_value(delivery_row.delivery_type) if delivery_row.delivery_type is not None else "unknown"): float(delivery_row.t or 0)
+            for delivery_row in delivery_split_rows
+        },
+        sales_by_payment_term={
+            (str(payment_term_row.payment_term) if payment_term_row.payment_term is not None else "unknown"): float(payment_term_row.t or 0)
+            for payment_term_row in payment_term_split_rows
+        },
         sales_by_staff=[
             {"user_id": staff_row.id, "full_name": staff_row.full_name,
              "total_sales": float(staff_row.total or 0), "invoice_count": int(staff_row.count or 0)}
