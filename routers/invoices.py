@@ -426,12 +426,20 @@ async def upload_signed_invoice(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Upload signed invoice PDF, mark invoice completed, and dispatch to Make/email."""
+    """Upload signed invoice (PDF or image), mark completed, and dispatch to Make/email."""
     import uuid
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
     from utils.s3 import upload_bytes, delete_object
 
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files are accepted")
+    filename = (file.filename or "").lower()
+    allowed_image_exts = (".jpg", ".jpeg", ".png", ".webp")
+    is_pdf = filename.endswith(".pdf")
+    is_image = filename.endswith(allowed_image_exts)
+    if not filename or (not is_pdf and not is_image):
+        raise HTTPException(400, "Only PDF or image files (JPG, PNG, WEBP) are accepted")
 
     inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not inv:
@@ -445,6 +453,21 @@ async def upload_signed_invoice(
         delete_object(inv.custom_pdf_s3_key)
 
     content = await file.read()
+    if is_image:
+        image = ImageReader(BytesIO(content))
+        img_w, img_h = image.getSize()
+        page_w, page_h = A4
+        scale = min(page_w / img_w, page_h / img_h)
+        draw_w = img_w * scale
+        draw_h = img_h * scale
+        x = (page_w - draw_w) / 2
+        y = (page_h - draw_h) / 2
+        out = BytesIO()
+        pdf = canvas.Canvas(out, pagesize=A4)
+        pdf.drawImage(image, x, y, width=draw_w, height=draw_h, preserveAspectRatio=True, anchor="c")
+        pdf.showPage()
+        pdf.save()
+        content = out.getvalue()
     s3_key = f"invoices/{invoice_id}/signed_{uuid.uuid4()}.pdf"
     upload_bytes(s3_key, content, "application/pdf")
 
@@ -461,14 +484,6 @@ async def upload_signed_invoice(
     )
     db.commit()
     db.refresh(inv)
-
-    send_document_to_make_from_s3(
-        doc_type="invoice",
-        document_number=inv.invoice_number,
-        s3_key=s3_key,
-        filename=f"{inv.invoice_number}.pdf",
-        customer_name=inv.customer.customer_name if inv.customer else "",
-    )
 
     recipients: List[str] = [INVOICE_PRIMARY_RECIPIENT]
     if additional_emails:

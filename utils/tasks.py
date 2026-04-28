@@ -292,6 +292,19 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
             import re
             return re.sub(r"[^a-z0-9]+", "", _norm(val))
 
+        def _generate_unique_sku(product_name: str, resolved_market_id: int | None) -> str:
+            import re
+            base_name = re.sub(r"[^A-Z0-9]+", "-", str(product_name or "").upper()).strip("-") or "PRODUCT"
+            base_name = base_name[:24]
+            market_part = f"M{resolved_market_id}" if resolved_market_id else "M0"
+            counter = 1
+            while True:
+                candidate = f"{base_name}-{market_part}-{counter:03d}"
+                exists = db.query(models.Product).filter(models.Product.sku == candidate).first()
+                if not exists:
+                    return candidate
+                counter += 1
+
         for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             data = dict(zip(headers, row))
             product_name = (data.get("product_name") or "").strip() if isinstance(data.get("product_name"), str) else data.get("product_name")
@@ -336,17 +349,19 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                     product = by_name[0]
                 elif len(by_name) > 1:
                     available_uoms = sorted({(p.unit_of_measure or "").strip() or "—" for p in by_name})
-                    errors.append(
-                        f"Row {row_num}: multiple products named '{product_name}' in market '{market_name}'. "
-                        f"Provide matching uom. Available uom(s): {', '.join(available_uoms)}"
-                    )
-                    continue
+                    # If multiple products share name and none matched exactly by uom,
+                    # create a new product record using the provided uom.
+                    pass
 
             if not product:
-                errors.append(
-                    f"Row {row_num}: product '{product_name}' with uom '{uom}' not found in market '{market_name}'"
+                product = models.Product(
+                    product_name=str(product_name).strip(),
+                    sku=_generate_unique_sku(str(product_name).strip(), market.id),
+                    unit_of_measure=str(uom).strip() if uom is not None else None,
+                    category_id=market.id,
                 )
-                continue
+                db.add(product)
+                db.flush()
 
             db.add(models.CostPrice(
                 product_id=product.id,
