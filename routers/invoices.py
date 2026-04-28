@@ -380,14 +380,6 @@ async def upload_invoice_pdf(
     inv.custom_pdf_s3_key = s3_key
     db.commit()
     db.refresh(inv)
-    send_document_to_make_from_s3(
-        doc_type="invoice",
-        document_number=inv.invoice_number,
-        s3_key=s3_key,
-        filename=f"{inv.invoice_number}.pdf",
-        customer_name=inv.customer.customer_name if inv.customer else "",
-    )
-
     recipients: List[str] = [INVOICE_PRIMARY_RECIPIENT]
     if additional_emails:
         recipients.extend([e.strip() for e in additional_emails.split(",") if e.strip()])
@@ -492,6 +484,18 @@ async def upload_signed_invoice(
             requested_by=current_user.id if current_user else None,
             metadata={"invoice_id": inv.id, "recipients": recipients},
         )
+
+    # Do not block queued email on Make integration issues.
+    try:
+        send_document_to_make_from_s3(
+            doc_type="invoice",
+            document_number=inv.invoice_number,
+            s3_key=s3_key,
+            filename=f"{inv.invoice_number}.pdf",
+            customer_name=inv.customer.customer_name if inv.customer else "",
+        )
+    except Exception:
+        pass
 
     return inv
 

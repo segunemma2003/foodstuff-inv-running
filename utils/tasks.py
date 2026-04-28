@@ -283,6 +283,11 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
         ]
         created, errors = 0, []
 
+        def _norm(val):
+            if val is None:
+                return ""
+            return " ".join(str(val).strip().lower().split())
+
         for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             data = dict(zip(headers, row))
             product_name = (data.get("product_name") or "").strip() if isinstance(data.get("product_name"), str) else data.get("product_name")
@@ -296,17 +301,36 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 continue
 
             market = db.query(models.ProductCategory).filter(
-                func.lower(models.ProductCategory.name) == str(market_name).strip().lower()
+                func.lower(func.trim(models.ProductCategory.name)) == _norm(market_name)
             ).first()
             if not market:
                 errors.append(f"Row {row_num}: market '{market_name}' not found")
                 continue
 
+            # Prefer strict match: product + market + uom
             product = db.query(models.Product).filter(
-                func.lower(models.Product.product_name) == str(product_name).strip().lower(),
+                func.lower(func.trim(models.Product.product_name)) == _norm(product_name),
                 models.Product.category_id == market.id,
-                func.lower(func.coalesce(models.Product.unit_of_measure, "")) == str(uom).strip().lower(),
+                func.lower(func.trim(func.coalesce(models.Product.unit_of_measure, ""))) == _norm(uom),
             ).first()
+
+            # Fallback: if UOM does not match exactly, resolve by product+market
+            # when this identifies a single product record.
+            if not product:
+                by_name = db.query(models.Product).filter(
+                    func.lower(func.trim(models.Product.product_name)) == _norm(product_name),
+                    models.Product.category_id == market.id,
+                ).all()
+                if len(by_name) == 1:
+                    product = by_name[0]
+                elif len(by_name) > 1:
+                    available_uoms = sorted({(p.unit_of_measure or "").strip() or "—" for p in by_name})
+                    errors.append(
+                        f"Row {row_num}: multiple products named '{product_name}' in market '{market_name}'. "
+                        f"Provide matching uom. Available uom(s): {', '.join(available_uoms)}"
+                    )
+                    continue
+
             if not product:
                 errors.append(
                     f"Row {row_num}: product '{product_name}' with uom '{uom}' not found in market '{market_name}'"
