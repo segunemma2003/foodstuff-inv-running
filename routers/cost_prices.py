@@ -5,7 +5,6 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
 
 from database import get_db
 from dependencies import get_current_user, require_not_analyst
@@ -14,13 +13,6 @@ import schemas
 from utils import audit
 
 router = APIRouter(prefix="/cost-prices", tags=["Cost Prices"])
-
-
-class MarketCostPriceUpdateRequest(BaseModel):
-    market_id: int
-    cost_price: float
-    effective_date: date
-    notes: Optional[str] = None
 
 
 @router.get("", response_model=List[schemas.CostPriceOut])
@@ -77,27 +69,6 @@ def add_cost_price(
     db.commit()
     db.refresh(cp)
     return cp
-
-
-@router.post("/market-update", response_model=schemas.MessageResponse)
-def update_market_cost_prices(
-    body: MarketCostPriceUpdateRequest,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_not_analyst),
-):
-    products = db.query(models.Product).filter(models.Product.category_id == body.market_id).all()
-    if not products:
-        raise HTTPException(404, "No products found in this market")
-    for product in products:
-        db.add(models.CostPrice(
-            product_id=product.id,
-            cost_price=body.cost_price,
-            effective_date=body.effective_date,
-            notes=body.notes,
-            created_by=current_user.id,
-        ))
-    db.commit()
-    return schemas.MessageResponse(message=f"Updated cost price for {len(products)} product(s) in market")
 
 
 @router.put("/{cp_id}", response_model=schemas.CostPriceOut)

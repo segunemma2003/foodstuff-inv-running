@@ -359,6 +359,19 @@ def process_product_bulk_task(self, s3_key: str, user_id: int, market_id: int | 
         ]
         created, updated, errors = 0, 0, []
 
+        def _generate_unique_sku(product_name: str, resolved_market_id: int | None) -> str:
+            import re
+            base_name = re.sub(r"[^A-Z0-9]+", "-", str(product_name or "").upper()).strip("-") or "PRODUCT"
+            base_name = base_name[:24]
+            market_part = f"M{resolved_market_id}" if resolved_market_id else "M0"
+            counter = 1
+            while True:
+                candidate = f"{base_name}-{market_part}-{counter:03d}"
+                exists = db.query(models.Product).filter(models.Product.sku == candidate).first()
+                if not exists:
+                    return candidate
+                counter += 1
+
         for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             data = dict(zip(headers, row))
             name = data.get("product_name")
@@ -379,6 +392,8 @@ def process_product_bulk_task(self, s3_key: str, user_id: int, market_id: int | 
             if resolved_market_id is None:
                 errors.append(f"Row {row_num}: market is required and must exist")
                 continue
+            if not sku:
+                sku = _generate_unique_sku(name, resolved_market_id)
             existing = db.query(models.Product).filter(
                 models.Product.category_id == resolved_market_id,
                 func.lower(models.Product.product_name) == str(name).strip().lower(),

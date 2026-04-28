@@ -2,10 +2,10 @@ from typing import List, Optional
 from io import BytesIO
 from datetime import date
 from decimal import Decimal
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -27,13 +27,6 @@ from utils.pricing import get_current_cost
 router = APIRouter(prefix="/products", tags=["Products"])
 
 
-class MarketProductBulkUpdateRequest(BaseModel):
-    market_id: int
-    product_name_prefix: Optional[str] = None
-    sku_prefix: Optional[str] = None
-    unit_of_measure: Optional[str] = None
-
-
 def _product_name_exists_in_market(
     db: Session,
     product_name: str,
@@ -47,6 +40,21 @@ def _product_name_exists_in_market(
     if exclude_product_id is not None:
         q = q.filter(models.Product.id != exclude_product_id)
     return db.query(q.exists()).scalar()
+
+
+def _generate_unique_sku(db: Session, product_name: str, market_id: Optional[int]) -> str:
+    base_name = re.sub(r"[^A-Z0-9]+", "-", (product_name or "").upper()).strip("-")
+    if not base_name:
+        base_name = "PRODUCT"
+    base_name = base_name[:24]
+    market_part = f"M{market_id}" if market_id else "M0"
+    counter = 1
+    while True:
+        candidate = f"{base_name}-{market_part}-{counter:03d}"
+        exists = db.query(models.Product).filter(models.Product.sku == candidate).first()
+        if not exists:
+            return candidate
+        counter += 1
 
 
 def _enrich(product: models.Product, db: Session) -> schemas.ProductOut:
@@ -249,12 +257,12 @@ def create_product(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_product_create_roles),
 ):
-    if body.sku and db.query(models.Product).filter(models.Product.sku == body.sku).first():
-        raise HTTPException(400, "SKU already exists")
     payload = body.model_dump(exclude_none=True)
     selected_market = payload.pop("market_id", None)
     if selected_market is not None:
         payload["category_id"] = selected_market
+    if payload.get("sku") and db.query(models.Product).filter(models.Product.sku == payload["sku"]).first():
+        raise HTTPException(400, "SKU already exists")
     product_name = str(payload.get("product_name") or "").strip()
     market_for_unique = payload.get("category_id")
     if product_name and _product_name_exists_in_market(db, product_name, market_for_unique):
@@ -270,6 +278,8 @@ def create_product(
             db.commit()
             db.refresh(existing)
             return _enrich(existing, db)
+    if not payload.get("sku"):
+        payload["sku"] = _generate_unique_sku(db, product_name, market_for_unique)
     product = models.Product(**payload)
     db.add(product)
     db.flush()
@@ -373,38 +383,6 @@ def delete_product(
         description=f"Deleted product {name}",
     )
     return schemas.MessageResponse(message="Product deleted")
-
-
-@router.post("/market-bulk-update", response_model=schemas.MessageResponse)
-def market_bulk_update_products(
-    body: MarketProductBulkUpdateRequest,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_product_create_roles),
-):
-    products = db.query(models.Product).filter(models.Product.category_id == body.market_id).all()
-    if not products:
-        raise HTTPException(404, "No products found in this market")
-    for product in products:
-        if body.product_name_prefix:
-            prefix = body.product_name_prefix.strip()
-            if prefix and not product.product_name.startswith(prefix):
-                product.product_name = f"{prefix}{product.product_name}"
-        if body.sku_prefix:
-            prefix = body.sku_prefix.strip()
-            if prefix:
-                product.sku = f"{prefix}{product.id}"
-        if body.unit_of_measure:
-            product.unit_of_measure = body.unit_of_measure
-    db.commit()
-    audit.log(
-        db,
-        models.AuditAction.update,
-        models.AuditEntity.product,
-        0,
-        current_user.id,
-        description=f"Bulk updated products in market {body.market_id}",
-    )
-    return schemas.MessageResponse(message=f"Bulk updated {len(products)} product(s)")
 
 
 @router.get("/{product_id}/cost-history", response_model=List[schemas.CostPriceOut])
