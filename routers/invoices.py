@@ -426,7 +426,7 @@ async def upload_signed_invoice(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Upload signed invoice (PDF or image), mark completed, and dispatch to Make/email."""
+    """Upload signed invoice (PDF or image), mark completed, and store for future viewing."""
     import uuid
     from io import BytesIO
     from reportlab.lib.pagesizes import A4
@@ -485,22 +485,7 @@ async def upload_signed_invoice(
     db.commit()
     db.refresh(inv)
 
-    recipients: List[str] = [INVOICE_PRIMARY_RECIPIENT]
-    if additional_emails:
-        recipients.extend([e.strip() for e in additional_emails.split(",") if e.strip()])
-    recipients = list(dict.fromkeys(recipients))
-    if recipients:
-        task = send_invoice_to_recipients_task.delay(inv.id, recipients)
-        log_queue_event(
-            db,
-            task_id=task.id,
-            event_type="signed_invoice_upload",
-            title=f"Upload signed invoice {inv.invoice_number}",
-            requested_by=current_user.id if current_user else None,
-            metadata={"invoice_id": inv.id, "recipients": recipients},
-        )
-
-    # Do not block queued email on Make integration issues.
+    # Do not block completion flow on Make integration issues.
     try:
         send_document_to_make_from_s3(
             doc_type="invoice",
