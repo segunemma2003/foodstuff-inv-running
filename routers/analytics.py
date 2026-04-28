@@ -73,187 +73,184 @@ def sales_analytics(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    selected_market = market_id or category_id
-    market_invoice_ids = _invoice_ids_for_market(db, selected_market)
-    product_invoice_ids = _invoice_ids_for_product(db, product_id)
+    selected_market_id = market_id or category_id
+    market_invoice_ids_subquery = _invoice_ids_for_market(db, selected_market_id)
+    product_invoice_ids_subquery = _invoice_ids_for_product(db, product_id)
 
-    # ── Core invoice query ────────────────────────────────────────────────────
-    inv_q = _inv_filters(
-        db.query(models.Invoice), date_from, date_to,
+    filtered_invoice_query = _inv_filters(
+        db.query(models.Invoice.id), date_from, date_to,
         delivery_type, payment_term, staff_id, customer_id,
     )
-    if market_invoice_ids is not None:
-        inv_q = inv_q.filter(models.Invoice.id.in_(market_invoice_ids))
-    if product_invoice_ids is not None:
-        inv_q = inv_q.filter(models.Invoice.id.in_(product_invoice_ids))
-    invoices = inv_q.all()
-    total_value = sum(float(i.total_amount) for i in invoices)
-    total_inv   = len(invoices)
+    if market_invoice_ids_subquery is not None:
+        filtered_invoice_query = filtered_invoice_query.filter(models.Invoice.id.in_(market_invoice_ids_subquery))
+    if product_invoice_ids_subquery is not None:
+        filtered_invoice_query = filtered_invoice_query.filter(models.Invoice.id.in_(product_invoice_ids_subquery))
+    filtered_invoice_ids_subquery = filtered_invoice_query.distinct().subquery()
 
-    quot_q = db.query(func.count(models.Quotation.id))
+    total_invoice_count = (
+        db.query(func.count(func.distinct(models.Invoice.id)))
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .scalar() or 0
+    )
+    total_sales_value = (
+        db.query(func.sum(models.InvoiceItem.line_total))
+        .filter(models.InvoiceItem.invoice_id.in_(filtered_invoice_ids_subquery))
+        .scalar() or 0
+    )
+
+    quotation_count_query = db.query(func.count(models.Quotation.id))
     if date_from:
-        quot_q = quot_q.filter(models.Quotation.quotation_date >= date_from)
+        quotation_count_query = quotation_count_query.filter(models.Quotation.quotation_date >= date_from)
     if date_to:
-        quot_q = quot_q.filter(models.Quotation.quotation_date <= date_to)
-    total_quot   = quot_q.scalar() or 0
-    conversion_rate = (total_inv / total_quot * 100) if total_quot else 0
-    avg_inv = total_value / total_inv if total_inv else 0
+        quotation_count_query = quotation_count_query.filter(models.Quotation.quotation_date <= date_to)
+    total_quotation_count = quotation_count_query.scalar() or 0
 
-    # ── Top customers (with same filters) ─────────────────────────────────────
-    tc_q = (
+    conversion_rate = (total_invoice_count / total_quotation_count * 100) if total_quotation_count else 0
+    average_invoice_value = (float(total_sales_value) / total_invoice_count) if total_invoice_count else 0
+
+    top_customers_rows = (
         db.query(
-            models.Customer.id, models.Customer.customer_name,
-            func.sum(models.Invoice.total_amount).label("total"),
+            models.Customer.id,
+            models.Customer.customer_name,
+            func.sum(models.InvoiceItem.line_total).label("total"),
         )
         .join(models.Invoice, models.Invoice.customer_id == models.Customer.id)
-    )
-    tc_q = _inv_filters(tc_q, date_from, date_to, delivery_type, payment_term, staff_id, customer_id)
-    if market_invoice_ids is not None:
-        tc_q = tc_q.filter(models.Invoice.id.in_(market_invoice_ids))
-    if product_invoice_ids is not None:
-        tc_q = tc_q.filter(models.Invoice.id.in_(product_invoice_ids))
-    top_cust = (
-        tc_q.group_by(models.Customer.id, models.Customer.customer_name)
-        .order_by(func.sum(models.Invoice.total_amount).desc())
-        .limit(10).all()
+        .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .group_by(models.Customer.id, models.Customer.customer_name)
+        .order_by(func.sum(models.InvoiceItem.line_total).desc())
+        .limit(10)
+        .all()
     )
 
-    # ── Top products ──────────────────────────────────────────────────────────
-    tp_q = (
+    top_products_query = (
         db.query(
-            models.Product.id, models.Product.product_name,
+            models.Product.id,
+            models.Product.product_name,
             func.sum(models.InvoiceItem.line_total).label("total"),
             func.sum(models.InvoiceItem.quantity).label("qty"),
         )
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
     )
-    tp_q = _inv_filters(tp_q, date_from, date_to, delivery_type, payment_term, staff_id, customer_id)
-    if selected_market:
-        tp_q = tp_q.filter(models.Product.category_id == selected_market)
+    if selected_market_id:
+        top_products_query = top_products_query.filter(models.Product.category_id == selected_market_id)
     if product_id:
-        tp_q = tp_q.filter(models.Product.id == product_id)
-    top_prod = (
-        tp_q.group_by(models.Product.id, models.Product.product_name)
+        top_products_query = top_products_query.filter(models.Product.id == product_id)
+    top_products_rows = (
+        top_products_query
+        .group_by(models.Product.id, models.Product.product_name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
-        .limit(10).all()
+        .limit(10)
+        .all()
     )
 
-    # ── Top categories ────────────────────────────────────────────────────────
-    tcat_q = (
+    top_markets_query = (
         db.query(
-            models.ProductCategory.id, models.ProductCategory.name,
+            models.ProductCategory.id,
+            models.ProductCategory.name,
             func.sum(models.InvoiceItem.line_total).label("total"),
         )
         .join(models.Product, models.Product.category_id == models.ProductCategory.id)
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
     )
-    tcat_q = _inv_filters(tcat_q, date_from, date_to, delivery_type, payment_term, staff_id, customer_id)
-    if selected_market:
-        tcat_q = tcat_q.filter(models.Product.category_id == selected_market)
-    top_cat = (
-        tcat_q.group_by(models.ProductCategory.id, models.ProductCategory.name)
+    if selected_market_id:
+        top_markets_query = top_markets_query.filter(models.Product.category_id == selected_market_id)
+    top_markets_rows = (
+        top_markets_query
+        .group_by(models.ProductCategory.id, models.ProductCategory.name)
         .order_by(func.sum(models.InvoiceItem.line_total).desc())
-        .limit(10).all()
+        .limit(10)
+        .all()
     )
 
-    # ── Sales by delivery type ────────────────────────────────────────────────
-    dt_q = db.query(
-        models.Invoice.delivery_type,
-        func.sum(models.Invoice.total_amount).label("t"),
-    )
-    dt_q = _inv_filters(dt_q, date_from, date_to, None, payment_term, staff_id, customer_id)
-    if market_invoice_ids is not None:
-        dt_q = dt_q.filter(models.Invoice.id.in_(market_invoice_ids))
-    if product_invoice_ids is not None:
-        dt_q = dt_q.filter(models.Invoice.id.in_(product_invoice_ids))
-    dt_rows = dt_q.group_by(models.Invoice.delivery_type).all()
-
-    # ── Sales by payment term ─────────────────────────────────────────────────
-    pt_q = db.query(
-        models.Invoice.payment_term,
-        func.sum(models.Invoice.total_amount).label("t"),
-    )
-    pt_q = _inv_filters(pt_q, date_from, date_to, delivery_type, None, staff_id, customer_id)
-    if market_invoice_ids is not None:
-        pt_q = pt_q.filter(models.Invoice.id.in_(market_invoice_ids))
-    if product_invoice_ids is not None:
-        pt_q = pt_q.filter(models.Invoice.id.in_(product_invoice_ids))
-    pt_rows = pt_q.group_by(models.Invoice.payment_term).all()
-
-    # ── Sales by staff ────────────────────────────────────────────────────────
-    st_q = (
+    delivery_split_rows = (
         db.query(
-            models.User.id, models.User.full_name,
-            func.sum(models.Invoice.total_amount).label("total"),
-            func.count(models.Invoice.id).label("count"),
+            models.Invoice.delivery_type,
+            func.sum(models.InvoiceItem.line_total).label("t"),
+        )
+        .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .group_by(models.Invoice.delivery_type)
+        .all()
+    )
+
+    payment_term_split_rows = (
+        db.query(
+            models.Invoice.payment_term,
+            func.sum(models.InvoiceItem.line_total).label("t"),
+        )
+        .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .group_by(models.Invoice.payment_term)
+        .all()
+    )
+
+    staff_sales_rows = (
+        db.query(
+            models.User.id,
+            models.User.full_name,
+            func.sum(models.InvoiceItem.line_total).label("total"),
+            func.count(func.distinct(models.Invoice.id)).label("count"),
         )
         .join(models.Invoice, models.Invoice.created_by == models.User.id)
+        .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .group_by(models.User.id, models.User.full_name)
+        .all()
     )
-    st_q = _inv_filters(st_q, date_from, date_to, delivery_type, payment_term, None, customer_id)
-    if market_invoice_ids is not None:
-        st_q = st_q.filter(models.Invoice.id.in_(market_invoice_ids))
-    if product_invoice_ids is not None:
-        st_q = st_q.filter(models.Invoice.id.in_(product_invoice_ids))
-    staff_rows = st_q.group_by(models.User.id, models.User.full_name).all()
 
-    # ── Daily trend (last 30 days or within date range) ───────────────────────
-    daily_from = date_from or (date.today() - timedelta(days=30))
-    daily_to   = date_to   or date.today()
-    daily_q = (
+    trend_start_date = date_from or (date.today() - timedelta(days=30))
+    trend_end_date = date_to or date.today()
+
+    daily_trend_rows = (
         db.query(
             models.Invoice.invoice_date,
-            func.sum(models.Invoice.total_amount).label("total"),
-            func.count(models.Invoice.id).label("count"),
+            func.sum(models.InvoiceItem.line_total).label("total"),
+            func.count(func.distinct(models.Invoice.id)).label("count"),
         )
-    )
-    daily_q = _inv_filters(
-        daily_q, daily_from, daily_to,
-        delivery_type, payment_term, staff_id, customer_id,
-    )
-    if market_invoice_ids is not None:
-        daily_q = daily_q.filter(models.Invoice.id.in_(market_invoice_ids))
-    if product_invoice_ids is not None:
-        daily_q = daily_q.filter(models.Invoice.id.in_(product_invoice_ids))
-    daily = (
-        daily_q
+        .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
+        .filter(
+            models.Invoice.id.in_(filtered_invoice_ids_subquery),
+            models.Invoice.invoice_date >= trend_start_date,
+            models.Invoice.invoice_date <= trend_end_date,
+        )
         .group_by(models.Invoice.invoice_date)
         .order_by(models.Invoice.invoice_date)
         .all()
     )
 
-    # ── Monthly trend ─────────────────────────────────────────────────────────
-    mon_q = db.query(
-        extract("year",  models.Invoice.invoice_date).label("year"),
-        extract("month", models.Invoice.invoice_date).label("month"),
-        func.sum(models.Invoice.total_amount).label("total"),
-        func.count(models.Invoice.id).label("count"),
+    monthly_trend_rows = (
+        db.query(
+            extract("year", models.Invoice.invoice_date).label("year"),
+            extract("month", models.Invoice.invoice_date).label("month"),
+            func.sum(models.InvoiceItem.line_total).label("total"),
+            func.count(func.distinct(models.Invoice.id)).label("count"),
+        )
+        .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
+        .filter(models.Invoice.id.in_(filtered_invoice_ids_subquery))
+        .group_by("year", "month")
+        .order_by("year", "month")
+        .all()
     )
-    mon_q = _inv_filters(
-        mon_q, date_from, date_to,
-        delivery_type, payment_term, staff_id, customer_id,
-    )
-    if market_invoice_ids is not None:
-        mon_q = mon_q.filter(models.Invoice.id.in_(market_invoice_ids))
-    if product_invoice_ids is not None:
-        mon_q = mon_q.filter(models.Invoice.id.in_(product_invoice_ids))
-    monthly = mon_q.group_by("year", "month").order_by("year", "month").all()
 
     return schemas.SalesAnalytics(
-        total_sales_value=total_value,
-        total_invoices=total_inv,
-        total_quotations=total_quot,
+        total_sales_value=float(total_sales_value or 0),
+        total_invoices=total_invoice_count,
+        total_quotations=total_quotation_count,
         quotation_conversion_rate=round(conversion_rate, 2),
-        average_invoice_value=round(avg_inv, 2),
+        average_invoice_value=round(average_invoice_value, 2),
         top_customers=[
             {"customer_id": r.id, "customer_name": r.customer_name, "total": float(r.total or 0)}
-            for r in top_cust
+            for r in top_customers_rows
         ],
         top_products=[
             {"product_id": r.id, "product_name": r.product_name,
              "total": float(r.total or 0), "qty": float(r.qty or 0)}
-            for r in top_prod
+            for r in top_products_rows
         ],
         top_markets=[
             {
@@ -263,7 +260,7 @@ def sales_analytics(
                 "market_name": r.name,
                 "total": float(r.total or 0),
             }
-            for r in top_cat
+            for r in top_markets_rows
         ],
         top_categories=[
             {
@@ -273,23 +270,23 @@ def sales_analytics(
                 "market_name": r.name,
                 "total": float(r.total or 0),
             }
-            for r in top_cat
+            for r in top_markets_rows
         ],
-        sales_by_delivery_type={_enum_or_str_value(r.delivery_type): float(r.t or 0) for r in dt_rows},
-        sales_by_payment_term={r.payment_term: float(r.t or 0) for r in pt_rows},
+        sales_by_delivery_type={_enum_or_str_value(r.delivery_type): float(r.t or 0) for r in delivery_split_rows},
+        sales_by_payment_term={r.payment_term: float(r.t or 0) for r in payment_term_split_rows},
         sales_by_staff=[
             {"user_id": r.id, "full_name": r.full_name,
              "total_sales": float(r.total or 0), "invoice_count": int(r.count or 0)}
-            for r in staff_rows
+            for r in staff_sales_rows
         ],
         daily_trend=[
             {"date": str(r.invoice_date), "total": float(r.total or 0), "count": int(r.count or 0)}
-            for r in daily
+            for r in daily_trend_rows
         ],
         monthly_trend=[
             {"year": int(r.year), "month": int(r.month),
              "total": float(r.total or 0), "count": int(r.count or 0)}
-            for r in monthly
+            for r in monthly_trend_rows
         ],
     )
 
