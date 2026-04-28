@@ -191,7 +191,7 @@ def sales_analytics(
     delivery_split_rows = (
         db.query(
             models.Invoice.delivery_type,
-            func.sum(models.InvoiceItem.line_total).label("t"),
+            func.sum(models.InvoiceItem.line_total).label("total_amount"),
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
         .filter(models.Invoice.id.in_(filtered_invoice_ids))
@@ -202,7 +202,7 @@ def sales_analytics(
     payment_term_split_rows = (
         db.query(
             models.Invoice.payment_term,
-            func.sum(models.InvoiceItem.line_total).label("t"),
+            func.sum(models.InvoiceItem.line_total).label("total_amount"),
         )
         .join(models.InvoiceItem, models.InvoiceItem.invoice_id == models.Invoice.id)
         .filter(models.Invoice.id.in_(filtered_invoice_ids))
@@ -294,11 +294,11 @@ def sales_analytics(
             for market_row in top_markets_rows
         ],
         sales_by_delivery_type={
-            (_enum_or_str_value(delivery_row.delivery_type) if delivery_row.delivery_type is not None else "unknown"): float(delivery_row.t or 0)
+            (_enum_or_str_value(delivery_row.delivery_type) if delivery_row.delivery_type is not None else "unknown"): float(delivery_row.total_amount or 0)
             for delivery_row in delivery_split_rows
         },
         sales_by_payment_term={
-            (str(payment_term_row.payment_term) if payment_term_row.payment_term is not None else "unknown"): float(payment_term_row.t or 0)
+            (str(payment_term_row.payment_term) if payment_term_row.payment_term is not None else "unknown"): float(payment_term_row.total_amount or 0)
             for payment_term_row in payment_term_split_rows
         },
         sales_by_staff=[
