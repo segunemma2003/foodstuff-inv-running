@@ -10,11 +10,15 @@ from datetime import date, datetime
 from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, String
 import openpyxl
 from openpyxl.styles import Font
 
 import models
+
+
+def _not_cancelled_invoice_filter():
+    return func.lower(models.Invoice.status.cast(String)) != "cancelled"
 
 
 def _parse_date(val) -> Optional[date]:
@@ -39,7 +43,7 @@ def build_sales(db: Session, params: dict) -> Tuple[openpyxl.Workbook, str]:
     payment_term = params.get("payment_term")
     delivery_type = params.get("delivery_type")
 
-    q = db.query(models.Invoice).filter(models.Invoice.status != models.InvoiceStatus.cancelled)
+    q = db.query(models.Invoice).filter(_not_cancelled_invoice_filter())
     if date_from:
         q = q.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
@@ -137,7 +141,7 @@ def build_customer_sales(db: Session, params: dict) -> Tuple[openpyxl.Workbook, 
             func.sum(models.Invoice.total_amount).label("total_sales"),
         )
         .join(models.Invoice, models.Invoice.customer_id == models.Customer.id)
-        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
+        .filter(_not_cancelled_invoice_filter())
     )
     if date_from:
         q = q.filter(models.Invoice.invoice_date >= date_from)
@@ -170,7 +174,7 @@ def build_product_sales(db: Session, params: dict) -> Tuple[openpyxl.Workbook, s
         )
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
+        .filter(_not_cancelled_invoice_filter())
     )
     if date_from:
         q = q.filter(models.Invoice.invoice_date >= date_from)
@@ -231,7 +235,7 @@ def build_staff_performance(db: Session, params: dict) -> Tuple[openpyxl.Workboo
     _bold_row(ws)
     for u in users:
         q_filter = [models.Quotation.created_by == u.id]
-        i_filter = [models.Invoice.created_by == u.id, models.Invoice.status != models.InvoiceStatus.cancelled]
+        i_filter = [models.Invoice.created_by == u.id, _not_cancelled_invoice_filter()]
         if date_from:
             q_filter.append(models.Quotation.quotation_date >= date_from)
             i_filter.append(models.Invoice.invoice_date >= date_from)

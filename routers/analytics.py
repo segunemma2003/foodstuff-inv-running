@@ -18,11 +18,13 @@ def _enum_or_str_value(v):
     return v.value if hasattr(v, "value") else str(v)
 
 
+def _not_cancelled_invoice_filter():
+    return func.lower(models.Invoice.status.cast(String)) != "cancelled"
+
+
 def _inv_filters(invoice_query, date_from, date_to, delivery_type=None, payment_term=None,
                  staff_id=None, customer_id=None):
-    # Cast enum/text status to string for robust cross-environment matching.
-    invoice_status_text = func.lower(models.Invoice.status.cast(String))
-    invoice_query = invoice_query.filter(invoice_status_text != "cancelled")
+    invoice_query = invoice_query.filter(_not_cancelled_invoice_filter())
     if date_from:
         invoice_query = invoice_query.filter(models.Invoice.invoice_date >= date_from)
     if date_to:
@@ -347,7 +349,7 @@ def customer_behavior(
         db.query(models.Invoice)
         .filter(
             models.Invoice.customer_id.in_(customer_ids),
-            models.Invoice.status != models.InvoiceStatus.cancelled,
+            _not_cancelled_invoice_filter(),
         )
     )
     if market_invoice_ids is not None:
@@ -370,7 +372,7 @@ def customer_behavior(
         .join(models.Product, models.Product.id == models.InvoiceItem.product_id)
         .filter(
             models.Invoice.customer_id.in_(customer_ids),
-            models.Invoice.status != models.InvoiceStatus.cancelled,
+            _not_cancelled_invoice_filter(),
         )
     )
     if selected_market:
@@ -459,7 +461,7 @@ def product_sales_analytics(
         )
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
+        .filter(_not_cancelled_invoice_filter())
     )
     if date_from:
         product_sales_query = product_sales_query.filter(models.Invoice.invoice_date >= date_from)
@@ -512,8 +514,7 @@ def staff_performance(
     results = []
     for u in users:
         q_filter = [models.Quotation.created_by == u.id]
-        i_filter = [models.Invoice.created_by == u.id,
-                    models.Invoice.status != models.InvoiceStatus.cancelled]
+        i_filter = [models.Invoice.created_by == u.id, _not_cancelled_invoice_filter()]
         if date_from:
             q_filter.append(models.Quotation.quotation_date >= date_from)
             i_filter.append(models.Invoice.invoice_date >= date_from)
@@ -854,7 +855,7 @@ def comprehensive_stats(
             func.sum(models.Invoice.total_amount).label("total"),
         )
         .join(models.Invoice, models.Invoice.created_by == models.User.id)
-        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
+        .filter(_not_cancelled_invoice_filter())
     )
     if date_from:
         revenue_by_role_query = revenue_by_role_query.filter(models.Invoice.invoice_date >= date_from)
@@ -874,7 +875,7 @@ def comprehensive_stats(
             func.sum(models.Invoice.amount_paid).label("collected"),
         )
         .join(models.Invoice, models.Invoice.customer_id == models.Customer.id)
-        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
+        .filter(_not_cancelled_invoice_filter())
     )
     if date_from:
         top_customers_query = top_customers_query.filter(models.Invoice.invoice_date >= date_from)
@@ -897,7 +898,7 @@ def comprehensive_stats(
         )
         .join(models.InvoiceItem, models.InvoiceItem.product_id == models.Product.id)
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
-        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
+        .filter(_not_cancelled_invoice_filter())
     )
     if date_from:
         top_products_query = top_products_query.filter(models.Invoice.invoice_date >= date_from)

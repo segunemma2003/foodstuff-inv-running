@@ -2,7 +2,7 @@ from typing import List, Optional
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, String
 
 from database import get_db
 from dependencies import get_current_user, require_not_analyst
@@ -11,6 +11,10 @@ import schemas
 from utils import audit
 
 router = APIRouter(prefix="/customers", tags=["Customers"])
+
+
+def _not_cancelled_invoice_filter():
+    return func.lower(models.Invoice.status.cast(String)) != "cancelled"
 
 
 @router.get("", response_model=List[schemas.CustomerOut])
@@ -29,7 +33,7 @@ def list_customers(
             models.Invoice.customer_id.label("customer_id"),
             func.max(models.Invoice.invoice_date).label("last_date"),
         )
-        .filter(models.Invoice.status != models.InvoiceStatus.cancelled)
+        .filter(_not_cancelled_invoice_filter())
         .group_by(models.Invoice.customer_id)
         .subquery()
     )
@@ -173,7 +177,7 @@ def customer_analytics(
 
     base_filter = [
         models.Invoice.customer_id == customer_id,
-        models.Invoice.status != models.InvoiceStatus.cancelled,
+        _not_cancelled_invoice_filter(),
     ]
 
     # Aggregate invoice/item stats in one query using line totals (source of truth).
@@ -218,7 +222,10 @@ def customer_analytics(
     total_qty   = float(item_agg.total_qty or 0)
     cos         = float(item_agg.cost_of_sales or 0)
     avg_order   = total_value / num_orders if num_orders else 0
-    pref_pt     = max(pt_rows, key=lambda r: r.cnt).payment_term if pt_rows else None
+    pref_pt = None
+    if pt_rows:
+        payment_term_value = max(pt_rows, key=lambda row: row.cnt).payment_term
+        pref_pt = payment_term_value.value if hasattr(payment_term_value, "value") else (str(payment_term_value) if payment_term_value is not None else None)
     pref_dt = None
     if dt_rows:
         raw_delivery = max(dt_rows, key=lambda r: r.cnt).delivery_type
@@ -259,7 +266,7 @@ def customer_top_products(
         .join(models.Invoice, models.Invoice.id == models.InvoiceItem.invoice_id)
         .filter(
             models.Invoice.customer_id == customer_id,
-            models.Invoice.status != models.InvoiceStatus.cancelled,
+            _not_cancelled_invoice_filter(),
         )
     )
     if date_from:
@@ -293,7 +300,7 @@ def customer_cost_of_sales(
 
     base_filter = [
         models.Invoice.customer_id == customer_id,
-        models.Invoice.status != models.InvoiceStatus.cancelled,
+        _not_cancelled_invoice_filter(),
     ]
     if date_from:
         base_filter.append(models.Invoice.invoice_date >= date_from)
