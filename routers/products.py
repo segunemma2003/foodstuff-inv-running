@@ -372,6 +372,39 @@ def delete_product(
     if not p:
         raise HTTPException(404, "Product not found")
     name = p.product_name
+
+    linked_cost_prices = db.query(func.count(models.CostPrice.id)).filter(
+        models.CostPrice.product_id == p.id
+    ).scalar() or 0
+    linked_quotation_items = db.query(func.count(models.QuotationItem.id)).filter(
+        models.QuotationItem.product_id == p.id
+    ).scalar() or 0
+    linked_invoice_items = db.query(func.count(models.InvoiceItem.id)).filter(
+        models.InvoiceItem.product_id == p.id
+    ).scalar() or 0
+
+    if linked_cost_prices or linked_quotation_items or linked_invoice_items:
+        # Keep historical references intact; deactivate instead of hard-delete.
+        p.is_active = False
+        audit.log(
+            db,
+            models.AuditAction.deactivate,
+            models.AuditEntity.product,
+            product_id,
+            current_user.id,
+            description=f"Deactivated product {name} (linked to historical records)",
+            new_values={
+                "is_active": False,
+                "linked_cost_prices": linked_cost_prices,
+                "linked_quotation_items": linked_quotation_items,
+                "linked_invoice_items": linked_invoice_items,
+            },
+        )
+        db.commit()
+        return schemas.MessageResponse(
+            message="Product is used in existing records and was disabled instead of deleted"
+        )
+
     db.delete(p)
     db.commit()
     audit.log(
