@@ -88,6 +88,7 @@ class CategoryCreate(BaseModel):
 class CategoryUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class CategoryOut(BaseModel):
@@ -96,6 +97,7 @@ class CategoryOut(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
+    is_active: bool = True
 
 
 class MarketOut(CategoryOut):

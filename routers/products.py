@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -24,6 +25,13 @@ from utils import audit
 from utils.pricing import get_current_cost
 
 router = APIRouter(prefix="/products", tags=["Products"])
+
+
+class MarketProductBulkUpdateRequest(BaseModel):
+    market_id: int
+    product_name_prefix: Optional[str] = None
+    sku_prefix: Optional[str] = None
+    unit_of_measure: Optional[str] = None
 
 
 def _product_name_exists_in_market(
@@ -74,8 +82,11 @@ def _enrich(product: models.Product, db: Session) -> schemas.ProductOut:
 
 
 @router.get("/categories", response_model=List[schemas.CategoryOut])
-def list_categories(db: Session = Depends(get_db), _: models.User = Depends(require_market_view_roles)):
-    return db.query(models.ProductCategory).all()
+def list_categories(db: Session = Depends(get_db), current_user: models.User = Depends(require_market_view_roles)):
+    q = db.query(models.ProductCategory)
+    if current_user.role not in [models.UserRole.admin, models.UserRole.manager]:
+        q = q.filter(models.ProductCategory.is_active == True)
+    return q.all()
 
 
 @router.post("/categories", response_model=schemas.CategoryOut, status_code=201)
@@ -94,8 +105,11 @@ def create_category(
 
 
 @router.get("/markets", response_model=List[schemas.MarketOut])
-def list_markets(db: Session = Depends(get_db), _: models.User = Depends(require_market_view_roles)):
-    return db.query(models.ProductCategory).all()
+def list_markets(db: Session = Depends(get_db), current_user: models.User = Depends(require_market_view_roles)):
+    q = db.query(models.ProductCategory)
+    if current_user.role not in [models.UserRole.admin, models.UserRole.manager]:
+        q = q.filter(models.ProductCategory.is_active == True)
+    return q.all()
 
 
 @router.post("/markets", response_model=schemas.MarketOut, status_code=201)
@@ -141,6 +155,36 @@ def delete_market(
         raise HTTPException(404, "Market not found")
     db.delete(market)
     db.commit()
+
+
+@router.post("/markets/{market_id}/disable", response_model=schemas.MarketOut)
+def disable_market(
+    market_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_market_manage_roles),
+):
+    market = db.query(models.ProductCategory).filter(models.ProductCategory.id == market_id).first()
+    if not market:
+        raise HTTPException(404, "Market not found")
+    market.is_active = False
+    db.commit()
+    db.refresh(market)
+    return market
+
+
+@router.post("/markets/{market_id}/enable", response_model=schemas.MarketOut)
+def enable_market(
+    market_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_market_manage_roles),
+):
+    market = db.query(models.ProductCategory).filter(models.ProductCategory.id == market_id).first()
+    if not market:
+        raise HTTPException(404, "Market not found")
+    market.is_active = True
+    db.commit()
+    db.refresh(market)
+    return market
 
 
 @router.put("/categories/{category_id}", response_model=schemas.CategoryOut)
@@ -214,7 +258,18 @@ def create_product(
     product_name = str(payload.get("product_name") or "").strip()
     market_for_unique = payload.get("category_id")
     if product_name and _product_name_exists_in_market(db, product_name, market_for_unique):
-        raise HTTPException(400, "Product name already exists in this market")
+        existing = db.query(models.Product).filter(
+            func.lower(models.Product.product_name) == product_name.lower(),
+            models.Product.category_id == market_for_unique,
+        ).first()
+        if existing:
+            if payload.get("sku"):
+                existing.sku = payload["sku"]
+            if payload.get("unit_of_measure"):
+                existing.unit_of_measure = payload["unit_of_measure"]
+            db.commit()
+            db.refresh(existing)
+            return _enrich(existing, db)
     product = models.Product(**payload)
     db.add(product)
     db.flush()
@@ -242,7 +297,7 @@ def update_product(
     product_id: int,
     body: schemas.ProductUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_not_analyst),
+    current_user: models.User = Depends(require_product_create_roles),
 ):
     p = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not p:
@@ -265,11 +320,11 @@ def update_product(
     return _enrich(p, db)
 
 
-@router.delete("/{product_id}", response_model=schemas.MessageResponse)
-def deactivate_product(
+@router.post("/{product_id}/disable", response_model=schemas.MessageResponse)
+def disable_product(
     product_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_not_analyst),
+    current_user: models.User = Depends(require_product_create_roles),
 ):
     p = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not p:
@@ -278,7 +333,78 @@ def deactivate_product(
     audit.log(db, models.AuditAction.deactivate, models.AuditEntity.product, p.id,
                current_user.id, description=f"Deactivated product {p.product_name}")
     db.commit()
-    return schemas.MessageResponse(message="Product deactivated")
+    return schemas.MessageResponse(message="Product disabled")
+
+
+@router.post("/{product_id}/enable", response_model=schemas.MessageResponse)
+def enable_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_product_create_roles),
+):
+    p = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not p:
+        raise HTTPException(404, "Product not found")
+    p.is_active = True
+    audit.log(db, models.AuditAction.update, models.AuditEntity.product, p.id,
+              current_user.id, description=f"Enabled product {p.product_name}")
+    db.commit()
+    return schemas.MessageResponse(message="Product enabled")
+
+
+@router.delete("/{product_id}", response_model=schemas.MessageResponse)
+def delete_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_product_create_roles),
+):
+    p = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not p:
+        raise HTTPException(404, "Product not found")
+    name = p.product_name
+    db.delete(p)
+    db.commit()
+    audit.log(
+        db,
+        models.AuditAction.delete,
+        models.AuditEntity.product,
+        product_id,
+        current_user.id,
+        description=f"Deleted product {name}",
+    )
+    return schemas.MessageResponse(message="Product deleted")
+
+
+@router.post("/market-bulk-update", response_model=schemas.MessageResponse)
+def market_bulk_update_products(
+    body: MarketProductBulkUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_product_create_roles),
+):
+    products = db.query(models.Product).filter(models.Product.category_id == body.market_id).all()
+    if not products:
+        raise HTTPException(404, "No products found in this market")
+    for product in products:
+        if body.product_name_prefix:
+            prefix = body.product_name_prefix.strip()
+            if prefix and not product.product_name.startswith(prefix):
+                product.product_name = f"{prefix}{product.product_name}"
+        if body.sku_prefix:
+            prefix = body.sku_prefix.strip()
+            if prefix:
+                product.sku = f"{prefix}{product.id}"
+        if body.unit_of_measure:
+            product.unit_of_measure = body.unit_of_measure
+    db.commit()
+    audit.log(
+        db,
+        models.AuditAction.update,
+        models.AuditEntity.product,
+        0,
+        current_user.id,
+        description=f"Bulk updated products in market {body.market_id}",
+    )
+    return schemas.MessageResponse(message=f"Bulk updated {len(products)} product(s)")
 
 
 @router.get("/{product_id}/cost-history", response_model=List[schemas.CostPriceOut])

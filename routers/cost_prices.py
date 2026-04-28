@@ -5,6 +5,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from database import get_db
 from dependencies import get_current_user, require_not_analyst
@@ -13,6 +14,13 @@ import schemas
 from utils import audit
 
 router = APIRouter(prefix="/cost-prices", tags=["Cost Prices"])
+
+
+class MarketCostPriceUpdateRequest(BaseModel):
+    market_id: int
+    cost_price: float
+    effective_date: date
+    notes: Optional[str] = None
 
 
 @router.get("", response_model=List[schemas.CostPriceOut])
@@ -71,6 +79,27 @@ def add_cost_price(
     return cp
 
 
+@router.post("/market-update", response_model=schemas.MessageResponse)
+def update_market_cost_prices(
+    body: MarketCostPriceUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_not_analyst),
+):
+    products = db.query(models.Product).filter(models.Product.category_id == body.market_id).all()
+    if not products:
+        raise HTTPException(404, "No products found in this market")
+    for product in products:
+        db.add(models.CostPrice(
+            product_id=product.id,
+            cost_price=body.cost_price,
+            effective_date=body.effective_date,
+            notes=body.notes,
+            created_by=current_user.id,
+        ))
+    db.commit()
+    return schemas.MessageResponse(message=f"Updated cost price for {len(products)} product(s) in market")
+
+
 @router.put("/{cp_id}", response_model=schemas.CostPriceOut)
 def update_cost_price(
     cp_id: int,
@@ -101,8 +130,9 @@ async def bulk_upload_cost_prices(
     Upload an Excel file to S3 and queue parsing via Celery.
     Returns a task_id immediately (< 50 ms). Poll /api/v1/jobs/{task_id} for result.
 
-    Required columns: sku, cost_price, effective_date
-    Optional:         notes
+    Required columns: cost_price + (sku or product_name)
+    Optional:         market_name (recommended when product name exists in multiple markets)
+    Effective date is applied immediately (today).
     """
     import uuid
     from utils.s3 import upload_bytes
@@ -126,8 +156,8 @@ def download_template(_: models.User = Depends(get_current_user)):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Cost Prices"
-    ws.append(["sku", "cost_price", "effective_date", "notes"])
-    ws.append(["RICE-001", 100000, "2024-01-01", "Example"])
+    ws.append(["product_name", "sku", "market_name", "cost_price"])
+    ws.append(["Rice 50kg", "RICE-001", "Abuja", 100000])
 
     buf = BytesIO()
     wb.save(buf)

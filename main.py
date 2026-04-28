@@ -110,6 +110,9 @@ def run_migrations():
             ))
             conn.execute(text("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'accountant'"))
             conn.execute(text("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'operations'"))
+            conn.execute(text(
+                "ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"
+            ))
         conn.commit()
 
 
