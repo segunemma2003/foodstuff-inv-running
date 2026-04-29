@@ -541,6 +541,7 @@ def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "", cost_o
     story = []
     summary = report_data.get("summary", {})
     by_product = report_data.get("by_product", [])
+    by_invoice = report_data.get("by_invoice", [])
     report_meta = report_data.get("meta", {}) or {}
 
     story.append(_header_band("", styles))
@@ -550,14 +551,17 @@ def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "", cost_o
         invoice_number = report_meta.get("invoice_number", "—")
         customer_name = report_meta.get("customer_name", "—")
         story.append(Paragraph(f"Invoice: <b>{invoice_number}</b> &nbsp;&nbsp; Customer: <b>{customer_name}</b>", styles["Normal"]))
-    story.append(Spacer(1, 0.25 * cm))
+        story.append(Spacer(1, 0.55 * cm))
+    else:
+        story.append(Spacer(1, 0.25 * cm))
 
+    margin_pct = f"{float(summary.get('gross_margin_pct', 0)):.2f}%"
     summary_table = Table(
         [
-            ["Total Cost", _fc(summary.get("total_cost", 0))],
-            ["Total Revenue", _fc(summary.get("total_revenue", 0))],
-            ["Gross Profit", _fc(summary.get("gross_profit", 0))],
-            ["Gross Margin", f"{float(summary.get('gross_margin_pct', 0)):.2f}%"],
+            [Paragraph("<b>Total Cost</b>", styles["Normal"]), Paragraph(_fc(summary.get("total_cost", 0)), styles["Right"])],
+            [Paragraph("Total Revenue", styles["Normal"]), Paragraph(_fc(summary.get("total_revenue", 0)), styles["Right"])],
+            [Paragraph("Gross Profit", styles["Normal"]), Paragraph(_fc(summary.get("gross_profit", 0)), styles["Right"])],
+            [Paragraph("Gross Margin", styles["Normal"]), Paragraph(margin_pct, styles["Right"])],
         ],
         colWidths=[7 * cm, 11 * cm],
     )
@@ -577,41 +581,40 @@ def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "", cost_o
             Paragraph("UNIT COST", styles["TableHdrR"]),
             Paragraph("TOTAL COST", styles["TableHdrR"]),
         ]]
+        for row in by_product:
+            qty = float(row.get("qty", 0) or 0)
+            unit_cost = float(row.get("unit_cost_price", 0) or 0)
+            if unit_cost == 0 and qty > 0:
+                unit_cost = float(row.get("cost", 0) or 0) / qty
+            rows.append([
+                Paragraph(str(row.get("product_name", "")), styles["Normal"]),
+                Paragraph(f"{qty:.0f}", styles["Right"]),
+                Paragraph(_fc(unit_cost), styles["Right"]),
+                Paragraph(_fc(float(row.get("cost", 0))), styles["Right"]),
+            ])
+        col_widths = [8.0 * cm, 2.0 * cm, 4.0 * cm, 4.0 * cm]
     else:
         rows = [[
-            Paragraph("PRODUCT", styles["TableHdr"]),
-            Paragraph("QTY", styles["TableHdrR"]),
-            Paragraph("UNIT COST", styles["TableHdrR"]),
+            Paragraph("INVOICE", styles["TableHdr"]),
+            Paragraph("DATE", styles["TableHdr"]),
+            Paragraph("CUSTOMER", styles["TableHdr"]),
             Paragraph("COST", styles["TableHdrR"]),
             Paragraph("REVENUE", styles["TableHdrR"]),
+            Paragraph("GROSS P.", styles["TableHdrR"]),
             Paragraph("MARGIN", styles["TableHdrR"]),
         ]]
-    for row in by_product:
-        qty = float(row.get("qty", 0) or 0)
-        unit_cost = float(row.get("unit_cost_price", 0) or 0)
-        if unit_cost == 0 and qty > 0:
-            unit_cost = float(row.get("cost", 0) or 0) / qty
-        if cost_only:
+        for row in by_invoice:
             rows.append([
-                Paragraph(str(row.get("product_name", "")), styles["Normal"]),
-                Paragraph(f"{qty:.0f}", styles["Right"]),
-                Paragraph(_fmt(unit_cost), styles["Right"]),
-                Paragraph(_fmt(float(row.get("cost", 0))), styles["Right"]),
-            ])
-        else:
-            rows.append([
-                Paragraph(str(row.get("product_name", "")), styles["Normal"]),
-                Paragraph(f"{qty:.0f}", styles["Right"]),
-                Paragraph(_fmt(unit_cost), styles["Right"]),
+                Paragraph(str(row.get("invoice_number", "")), styles["Normal"]),
+                Paragraph(str(row.get("invoice_date", "")), styles["Normal"]),
+                Paragraph(str(row.get("customer_name", "")), styles["Normal"]),
                 Paragraph(_fmt(float(row.get("cost", 0))), styles["Right"]),
                 Paragraph(_fmt(float(row.get("revenue", 0))), styles["Right"]),
+                Paragraph(_fmt(float(row.get("gross_profit", 0))), styles["Right"]),
                 Paragraph(f"{float(row.get('margin_pct', 0)):.2f}%", styles["Right"]),
             ])
-    table = Table(
-        rows,
-        colWidths=([8.0 * cm, 2.0 * cm, 4.0 * cm, 4.0 * cm] if cost_only else [5.5 * cm, 1.4 * cm, 2.5 * cm, 2.7 * cm, 2.7 * cm, 3.2 * cm]),
-        repeatRows=1,
-    )
+        col_widths = [2.6 * cm, 2.2 * cm, 3.4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm, 2.6 * cm]
+    table = Table(rows, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
         ("LINEABOVE", (0, 0), (-1, 0), 1, DARK_TEXT),
         ("LINEBELOW", (0, 0), (-1, 0), 1, DARK_TEXT),

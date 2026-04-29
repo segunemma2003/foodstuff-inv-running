@@ -355,14 +355,15 @@ def email_cost_of_sales_report(
     s   = data["summary"]
     rows_html = "".join(
         f"<tr style='background:{'#f9f9f9' if i%2 else '#fff'}'>"
-        f"<td style='padding:6px 10px'>{r['product_name']}</td>"
-        f"<td style='padding:6px 10px;text-align:right'>{r['qty']:.0f}</td>"
+        f"<td style='padding:6px 10px'>{r['invoice_number']}</td>"
+        f"<td style='padding:6px 10px'>{r['invoice_date']}</td>"
+        f"<td style='padding:6px 10px'>{r['customer_name']}</td>"
         f"<td style='padding:6px 10px;text-align:right'>&#8358;{r['cost']:,.2f}</td>"
         f"<td style='padding:6px 10px;text-align:right'>&#8358;{r['revenue']:,.2f}</td>"
         f"<td style='padding:6px 10px;text-align:right'>&#8358;{r['gross_profit']:,.2f}</td>"
         f"<td style='padding:6px 10px;text-align:right'>{r['margin_pct']:.1f}%</td>"
         f"</tr>"
-        for i, r in enumerate(data["by_product"])
+        for i, r in enumerate(data["by_invoice"])
     )
     date_label = ""
     if body.date_from or body.date_to:
@@ -389,12 +390,13 @@ def email_cost_of_sales_report(
           <td style="padding:10px">{s['gross_margin_pct']:.1f}%</td>
         </tr>
       </table>
-      <h3 style="color:#1e8449">Breakdown by Product</h3>
+      <h3 style="color:#1e8449">Breakdown by Invoice</h3>
       <table style="border-collapse:collapse;width:100%;font-size:13px">
         <thead>
           <tr style="background:#1e8449;color:#fff">
-            <th style="padding:8px 10px;text-align:left">Product</th>
-            <th style="padding:8px 10px;text-align:right">Qty</th>
+            <th style="padding:8px 10px;text-align:left">Invoice</th>
+            <th style="padding:8px 10px;text-align:left">Date</th>
+            <th style="padding:8px 10px;text-align:left">Customer</th>
             <th style="padding:8px 10px;text-align:right">Cost</th>
             <th style="padding:8px 10px;text-align:right">Revenue</th>
             <th style="padding:8px 10px;text-align:right">Gross Profit</th>
