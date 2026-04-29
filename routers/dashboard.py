@@ -306,6 +306,7 @@ def cost_of_sales_detail(
                 "product_id": r.product_id,
                 "product_name": r.product_name,
                 "qty": float(r.qty),
+                "unit_cost_price": (float(r.cost or 0) / float(r.qty)) if float(r.qty or 0) > 0 else 0,
                 "cost": float(r.cost or 0),
                 "revenue": float(r.revenue or 0),
                 "gross_profit": float(r.revenue or 0) - float(r.cost or 0),

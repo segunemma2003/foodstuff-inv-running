@@ -526,7 +526,7 @@ def generate_payment_receipt(payment: models.Payment) -> bytes:
     return buf.getvalue()
 
 
-def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "") -> bytes:
+def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "", cost_only: bool = False) -> bytes:
     _ensure_unicode_font()
     buf = BytesIO()
     doc = SimpleDocTemplate(
@@ -565,22 +565,48 @@ def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "") -> byt
     story.append(summary_table)
     story.append(Spacer(1, 0.4 * cm))
 
-    rows = [[
-        Paragraph("PRODUCT", styles["TableHdr"]),
-        Paragraph("QTY", styles["TableHdrR"]),
-        Paragraph("COST", styles["TableHdrR"]),
-        Paragraph("REVENUE", styles["TableHdrR"]),
-        Paragraph("MARGIN", styles["TableHdrR"]),
-    ]]
+    if cost_only:
+        rows = [[
+            Paragraph("PRODUCT", styles["TableHdr"]),
+            Paragraph("QTY", styles["TableHdrR"]),
+            Paragraph("UNIT COST", styles["TableHdrR"]),
+            Paragraph("TOTAL COST", styles["TableHdrR"]),
+        ]]
+    else:
+        rows = [[
+            Paragraph("PRODUCT", styles["TableHdr"]),
+            Paragraph("QTY", styles["TableHdrR"]),
+            Paragraph("UNIT COST", styles["TableHdrR"]),
+            Paragraph("COST", styles["TableHdrR"]),
+            Paragraph("REVENUE", styles["TableHdrR"]),
+            Paragraph("MARGIN", styles["TableHdrR"]),
+        ]]
     for row in by_product:
-        rows.append([
-            Paragraph(str(row.get("product_name", "")), styles["Normal"]),
-            Paragraph(f"{float(row.get('qty', 0)):.0f}", styles["Right"]),
-            Paragraph(_fmt(float(row.get("cost", 0))), styles["Right"]),
-            Paragraph(_fmt(float(row.get("revenue", 0))), styles["Right"]),
-            Paragraph(f"{float(row.get('margin_pct', 0)):.2f}%", styles["Right"]),
-        ])
-    table = Table(rows, colWidths=[6.8 * cm, 1.7 * cm, 3.1 * cm, 3.1 * cm, 3.3 * cm], repeatRows=1)
+        qty = float(row.get("qty", 0) or 0)
+        unit_cost = float(row.get("unit_cost_price", 0) or 0)
+        if unit_cost == 0 and qty > 0:
+            unit_cost = float(row.get("cost", 0) or 0) / qty
+        if cost_only:
+            rows.append([
+                Paragraph(str(row.get("product_name", "")), styles["Normal"]),
+                Paragraph(f"{qty:.0f}", styles["Right"]),
+                Paragraph(_fmt(unit_cost), styles["Right"]),
+                Paragraph(_fmt(float(row.get("cost", 0))), styles["Right"]),
+            ])
+        else:
+            rows.append([
+                Paragraph(str(row.get("product_name", "")), styles["Normal"]),
+                Paragraph(f"{qty:.0f}", styles["Right"]),
+                Paragraph(_fmt(unit_cost), styles["Right"]),
+                Paragraph(_fmt(float(row.get("cost", 0))), styles["Right"]),
+                Paragraph(_fmt(float(row.get("revenue", 0))), styles["Right"]),
+                Paragraph(f"{float(row.get('margin_pct', 0)):.2f}%", styles["Right"]),
+            ])
+    table = Table(
+        rows,
+        colWidths=([8.0 * cm, 2.0 * cm, 4.0 * cm, 4.0 * cm] if cost_only else [5.5 * cm, 1.4 * cm, 2.5 * cm, 2.7 * cm, 2.7 * cm, 3.2 * cm]),
+        repeatRows=1,
+    )
     table.setStyle(TableStyle([
         ("LINEABOVE", (0, 0), (-1, 0), 1, DARK_TEXT),
         ("LINEBELOW", (0, 0), (-1, 0), 1, DARK_TEXT),

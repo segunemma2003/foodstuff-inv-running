@@ -351,6 +351,31 @@ def download_invoice_pdf(
     )
 
 
+@router.get("/{invoice_id}/signed-pdf")
+def download_signed_invoice_pdf(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Stream only the uploaded signed invoice PDF."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from utils.s3 import download_bytes
+
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+    if not inv.custom_pdf_s3_key:
+        raise HTTPException(404, "Signed invoice not uploaded yet")
+
+    pdf_bytes = download_bytes(inv.custom_pdf_s3_key)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{inv.invoice_number}_signed.pdf"'},
+    )
+
+
 @router.get("/{invoice_id}/cost-of-sales/pdf")
 def download_invoice_cost_of_sales_pdf(
     invoice_id: int,
@@ -397,6 +422,7 @@ def download_invoice_cost_of_sales_pdf(
                 "product_id": product_row.product_id,
                 "product_name": product_row.product_name,
                 "qty": float(product_row.qty or 0),
+                "unit_cost_price": (float(product_row.cost or 0) / float(product_row.qty or 0)) if float(product_row.qty or 0) > 0 else 0,
                 "cost": float(product_row.cost or 0),
                 "revenue": float(product_row.revenue or 0),
                 "gross_profit": float(product_row.revenue or 0) - float(product_row.cost or 0),
@@ -422,6 +448,7 @@ def download_invoice_cost_of_sales_pdf(
     pdf_bytes = generate_cost_of_sales_pdf(
         report_data,
         title_suffix=f" ({inv.invoice_number})",
+        cost_only=True,
     )
     return StreamingResponse(
         BytesIO(pdf_bytes),
