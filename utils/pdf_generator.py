@@ -541,10 +541,15 @@ def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "", cost_o
     story = []
     summary = report_data.get("summary", {})
     by_product = report_data.get("by_product", [])
+    report_meta = report_data.get("meta", {}) or {}
 
     story.append(_header_band("", styles))
     story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER_GRAY, spaceAfter=8))
     story.append(Paragraph(f"Cost of Sales Report{title_suffix}", styles["DocTitle"]))
+    if report_meta.get("invoice_number") or report_meta.get("customer_name"):
+        invoice_number = report_meta.get("invoice_number", "—")
+        customer_name = report_meta.get("customer_name", "—")
+        story.append(Paragraph(f"Invoice: <b>{invoice_number}</b> &nbsp;&nbsp; Customer: <b>{customer_name}</b>", styles["Normal"]))
     story.append(Spacer(1, 0.25 * cm))
 
     summary_table = Table(

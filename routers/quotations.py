@@ -51,6 +51,11 @@ def _calc_and_build_items(
         if cost is None:
             product = db.query(models.Product).filter(models.Product.id == it.product_id).first()
             name = product.product_name if product else str(it.product_id)
+            if product and not product.is_active:
+                raise HTTPException(
+                    400,
+                    f"Product '{name}' is deactivated and cannot be used.",
+                )
             raise HTTPException(
                 400,
                 f"No active cost price for product '{name}' (id={it.product_id}). "
@@ -71,6 +76,11 @@ def _calc_and_build_items(
         uom = it.uom
         if not uom:
             product = db.query(models.Product).filter(models.Product.id == it.product_id).first()
+            if product and not product.is_active:
+                raise HTTPException(
+                    400,
+                    f"Product '{product.product_name}' is deactivated and cannot be used.",
+                )
             uom = product.unit_of_measure if product else None
 
         built.append(models.QuotationItem(
@@ -195,6 +205,8 @@ def preview_price(
         if cost is None:
             raise HTTPException(400, f"No cost price for product {req.product_id}")
         product = db.query(models.Product).filter(models.Product.id == req.product_id).first()
+        if product and not product.is_active:
+            raise HTTPException(400, f"Product '{product.product_name}' is deactivated and cannot be used.")
         pricing = calculate_item_price(cost, req.delivery_type, req.payment_term, rules)
         qty = float(req.quantity)
         results.append(schemas.PricePreviewResponse(

@@ -238,6 +238,8 @@ def create_invoice(
         product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
         if not product:
             raise HTTPException(404, f"Product {item.product_id} not found")
+        if not product.is_active:
+            raise HTTPException(400, f"Product '{product.product_name}' is deactivated and cannot be used")
 
         latest_cost = (
             db.query(models.CostPrice)
@@ -411,6 +413,10 @@ def download_invoice_cost_of_sales_pdf(
     gross_margin = round(gross_profit / total_revenue * 100, 2) if total_revenue else 0
 
     report_data = {
+        "meta": {
+            "invoice_number": inv.invoice_number,
+            "customer_name": inv.customer.customer_name if inv.customer else "",
+        },
         "summary": {
             "total_cost": total_cost,
             "total_revenue": total_revenue,
