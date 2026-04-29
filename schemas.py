@@ -419,6 +419,7 @@ class InvoiceOut(BaseModel):
     notes: Optional[str] = None
     total_amount: Decimal
     amount_paid: Decimal = Decimal("0")
+    custom_pdf_s3_key: Optional[str] = None
     created_by: int
     creator: Optional[UserOut] = None
     created_at: datetime

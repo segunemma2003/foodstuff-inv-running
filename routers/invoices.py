@@ -4,6 +4,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from database import get_db
 from dependencies import get_current_user, require_admin_or_manager, require_not_analyst
@@ -347,6 +348,85 @@ def download_invoice_pdf(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{inv.invoice_number}.pdf"'},
+    )
+
+
+@router.get("/{invoice_id}/cost-of-sales/pdf")
+def download_invoice_cost_of_sales_pdf(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from utils.pdf_generator import generate_cost_of_sales_pdf
+
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+
+    item_rows = (
+        db.query(
+            models.InvoiceItem.product_id,
+            models.Product.product_name,
+            func.sum(models.InvoiceItem.quantity).label("qty"),
+            func.sum(models.InvoiceItem.cost_price * models.InvoiceItem.quantity).label("cost"),
+            func.sum(models.InvoiceItem.line_total).label("revenue"),
+        )
+        .join(models.Product, models.Product.id == models.InvoiceItem.product_id)
+        .filter(models.InvoiceItem.invoice_id == invoice_id)
+        .group_by(models.InvoiceItem.product_id, models.Product.product_name)
+        .order_by(func.sum(models.InvoiceItem.cost_price * models.InvoiceItem.quantity).desc())
+        .all()
+    )
+
+    total_cost = sum(float(product_row.cost or 0) for product_row in item_rows)
+    total_revenue = sum(float(product_row.revenue or 0) for product_row in item_rows)
+    gross_profit = total_revenue - total_cost
+    gross_margin = round(gross_profit / total_revenue * 100, 2) if total_revenue else 0
+
+    report_data = {
+        "summary": {
+            "total_cost": total_cost,
+            "total_revenue": total_revenue,
+            "gross_profit": gross_profit,
+            "gross_margin_pct": gross_margin,
+        },
+        "by_product": [
+            {
+                "product_id": product_row.product_id,
+                "product_name": product_row.product_name,
+                "qty": float(product_row.qty or 0),
+                "cost": float(product_row.cost or 0),
+                "revenue": float(product_row.revenue or 0),
+                "gross_profit": float(product_row.revenue or 0) - float(product_row.cost or 0),
+                "margin_pct": round(
+                    (float(product_row.revenue or 0) - float(product_row.cost or 0)) / float(product_row.revenue) * 100, 2
+                ) if product_row.revenue else 0,
+            }
+            for product_row in item_rows
+        ],
+        "by_invoice": [
+            {
+                "invoice_id": inv.id,
+                "invoice_number": inv.invoice_number,
+                "invoice_date": str(inv.invoice_date),
+                "customer_name": inv.customer.customer_name if inv.customer else "",
+                "cost": total_cost,
+                "revenue": total_revenue,
+                "gross_profit": gross_profit,
+                "margin_pct": gross_margin,
+            }
+        ],
+    }
+    pdf_bytes = generate_cost_of_sales_pdf(
+        report_data,
+        title_suffix=f" ({inv.invoice_number})",
+    )
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{inv.invoice_number}_cost_of_sales.pdf"'},
     )
 
 
