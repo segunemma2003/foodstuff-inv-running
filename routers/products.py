@@ -7,7 +7,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, and_
 
 from database import get_db
 from dependencies import (
@@ -58,18 +58,61 @@ def _generate_unique_sku(db: Session, product_name: str, market_id: Optional[int
         counter += 1
 
 
-def _enrich(product: models.Product, db: Session) -> schemas.ProductOut:
+def _batch_latest_costs(db: Session, product_ids: list[int]) -> dict[int, models.CostPrice]:
+    """One grouped query per page instead of N cost lookups."""
+    if not product_ids:
+        return {}
+    today = date.today()
+    subq = (
+        db.query(
+            models.CostPrice.product_id.label("pid"),
+            func.max(models.CostPrice.effective_date).label("mx"),
+        )
+        .filter(
+            models.CostPrice.product_id.in_(product_ids),
+            models.CostPrice.effective_date <= today,
+        )
+        .group_by(models.CostPrice.product_id)
+        .subquery()
+    )
+    rows = (
+        db.query(models.CostPrice)
+        .join(
+            subq,
+            and_(
+                models.CostPrice.product_id == subq.c.pid,
+                models.CostPrice.effective_date == subq.c.mx,
+            ),
+        )
+        .all()
+    )
+    by_pid: dict[int, models.CostPrice] = {}
+    for cp in rows:
+        if cp.product_id not in by_pid:
+            by_pid[cp.product_id] = cp
+    return by_pid
+
+
+def _enrich(
+    product: models.Product,
+    db: Session,
+    *,
+    cost_by_product: Optional[dict[int, models.CostPrice]] = None,
+) -> schemas.ProductOut:
     from utils.s3 import presigned_url as s3_presigned
     out = schemas.ProductOut.model_validate(product)
-    cp = (
-        db.query(models.CostPrice)
-        .filter(
-            models.CostPrice.product_id == product.id,
-            models.CostPrice.effective_date <= date.today(),
+    if cost_by_product is not None:
+        cp = cost_by_product.get(product.id)
+    else:
+        cp = (
+            db.query(models.CostPrice)
+            .filter(
+                models.CostPrice.product_id == product.id,
+                models.CostPrice.effective_date <= date.today(),
+            )
+            .order_by(models.CostPrice.effective_date.desc())
+            .first()
         )
-        .order_by(models.CostPrice.effective_date.desc())
-        .first()
-    )
     if cp:
         out.current_cost_price = float(cp.cost_price)
         out.cost_price_effective_date = cp.effective_date
@@ -226,7 +269,7 @@ def delete_category(
     db.commit()
 
 
-@router.get("", response_model=List[schemas.ProductOut])
+@router.get("", response_model=schemas.ProductListPage)
 def list_products(
     skip: int = 0,
     limit: int = 50,
@@ -238,6 +281,9 @@ def list_products(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
+    skip = max(skip, 0)
+    limit = min(max(limit, 1), 200)
+
     product_query = db.query(models.Product)
     if search:
         term = f"%{search}%"
@@ -253,8 +299,14 @@ def list_products(
     else:
         # Default behavior across the app: only enabled products are visible.
         product_query = product_query.filter(models.Product.is_active == True)
-    products = product_query.order_by(models.Product.product_name).offset(skip).limit(limit).all()
-    return [_enrich(p, db) for p in products]
+
+    total = product_query.order_by(None).count()
+    products = (
+        product_query.order_by(models.Product.product_name).offset(skip).limit(limit).all()
+    )
+    cost_map = _batch_latest_costs(db, [p.id for p in products])
+    items = [_enrich(p, db, cost_by_product=cost_map) for p in products]
+    return schemas.ProductListPage(total=total, skip=skip, limit=limit, items=items)
 
 
 @router.post("", response_model=schemas.ProductOut, status_code=201)

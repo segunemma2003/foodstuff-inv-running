@@ -343,6 +343,25 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                     return candidate
                 counter += 1
 
+        def _cell_as_text(val):
+            if val is None:
+                return ""
+            if isinstance(val, str):
+                return val.strip()
+            if isinstance(val, bool):
+                return ""
+            return str(val).strip()
+
+        def _cost_cell_blank(val):
+            if val is None:
+                return True
+            if isinstance(val, str) and not val.strip():
+                return True
+            return False
+
+        consecutive_blank_rows = 0
+        BLANK_ROW_STOP = 3
+
         for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             data = dict(zip(headers, row))
             product_name = (data.get("product_name") or "").strip() if isinstance(data.get("product_name"), str) else data.get("product_name")
@@ -351,8 +370,18 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
             uom = (uom or "").strip() if isinstance(uom, str) else uom
             cost_price = data.get("cost_price")
 
+            pn_t = _cell_as_text(product_name)
+            mn_t = _cell_as_text(market_name)
+            uom_t = _cell_as_text(uom)
+
+            if not pn_t and not mn_t and not uom_t and _cost_cell_blank(cost_price):
+                consecutive_blank_rows += 1
+                if consecutive_blank_rows >= BLANK_ROW_STOP:
+                    break
+                continue
+            consecutive_blank_rows = 0
+
             if cost_price is None or not product_name or not market_name or not uom:
-                errors.append(f"Row {row_num}: required columns are product_name, uom, market_name, cost_price")
                 continue
 
             parsed_price = _parse_cost_price_cell(cost_price)
@@ -405,6 +434,12 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 )
                 db.add(product)
                 db.flush()
+
+            if product.category_id != market.id:
+                errors.append(
+                    f"Row {row_num}: product is linked to a different market than '{market_name}' — skipped (market not changed)"
+                )
+                continue
 
             db.add(models.CostPrice(
                 product_id=product.id,

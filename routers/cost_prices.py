@@ -103,6 +103,10 @@ async def bulk_upload_cost_prices(
 
     Required columns: product_name, uom, market_name, cost_price
     Effective date is applied immediately (today).
+
+    Rows with any required field missing are skipped without error. Scanning stops after
+    three consecutive completely blank rows. Existing products are never reassigned to
+    a different market.
     """
     import uuid
     from utils.s3 import upload_bytes

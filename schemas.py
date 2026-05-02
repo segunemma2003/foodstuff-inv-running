@@ -207,6 +207,15 @@ class ProductOut(BaseModel):
     cost_price_effective_date: Optional[date] = None
 
 
+class ProductListPage(BaseModel):
+    """Paginated product list from GET /products."""
+
+    total: int
+    skip: int
+    limit: int
+    items: List[ProductOut]
+
+
 # ─── Cost Prices ─────────────────────────────────────────────────────────────
 
 class CostPriceCreate(BaseModel):
