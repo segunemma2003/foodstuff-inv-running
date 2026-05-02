@@ -342,11 +342,18 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 return True
             return False
 
-        # Pre-load all markets and products (2 queries total instead of N per row)
-        market_by_norm: dict = {
-            _norm(m.name): m
-            for m in db.query(models.ProductCategory).all()
-        }
+        # Pre-load all markets and products (2 queries total instead of N per row).
+        # Order active markets first so that if two markets normalize to the same
+        # key, the active one wins (first-write-wins dict build).
+        market_by_norm: dict = {}
+        for m in (
+            db.query(models.ProductCategory)
+            .order_by(models.ProductCategory.is_active.desc())
+            .all()
+        ):
+            key = _norm(m.name)
+            if key not in market_by_norm:
+                market_by_norm[key] = m
 
         all_products = db.query(models.Product).all()
         # (norm_name, cat_id, norm_uom) -> product  — strict match
