@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import get_current_user, require_admin_or_manager
+from dependencies import get_current_user, require_admin_or_manager, require_admin
 import models
 import schemas
 from utils import audit
@@ -21,6 +21,26 @@ def list_rules(
     if is_active is not None:
         pricing_rule_query = pricing_rule_query.filter(models.PricingRule.is_active == is_active)
     return pricing_rule_query.order_by(models.PricingRule.rule_type, models.PricingRule.rule_name).all()
+
+
+@router.post("/bulk-delete", response_model=schemas.BulkDeleteResult)
+def bulk_delete_pricing_rules(
+    body: schemas.BulkIdsRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    result = schemas.BulkDeleteResult()
+    for rid in body.ids:
+        rule = db.query(models.PricingRule).filter(models.PricingRule.id == rid).first()
+        if not rule:
+            result.failed.append({"id": rid, "detail": "Pricing rule not found"})
+            continue
+        audit.log(db, models.AuditAction.delete, models.AuditEntity.pricing_rule, rule.id,
+                   current_user.id, description=f"Deleted pricing rule: {rule.rule_name}")
+        db.delete(rule)
+        result.deleted += 1
+    db.commit()
+    return result
 
 
 @router.post("", response_model=schemas.PricingRuleOut, status_code=201)
@@ -80,7 +100,7 @@ def update_rule(
 def delete_rule(
     rule_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin_or_manager),
+    current_user: models.User = Depends(require_admin),
 ):
     rule = db.query(models.PricingRule).filter(models.PricingRule.id == rule_id).first()
     if not rule:

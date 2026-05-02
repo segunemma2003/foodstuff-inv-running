@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import get_current_user, require_admin_or_manager
+from dependencies import get_current_user, require_admin, require_admin_or_manager
 import models
 import schemas
 from utils import audit
@@ -130,7 +130,7 @@ def update_payment_account(
 def deactivate_payment_account(
     account_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin_or_manager),
+    current_user: models.User = Depends(require_admin),
 ):
     """Soft-delete (deactivate) a payment account."""
     account = db.query(models.PaymentAccount).filter(models.PaymentAccount.id == account_id).first()

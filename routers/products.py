@@ -13,6 +13,7 @@ from database import get_db
 from dependencies import (
     get_current_user,
     require_not_analyst,
+    require_admin,
     require_admin_or_manager,
     require_market_view_roles,
     require_market_manage_roles,
@@ -216,7 +217,7 @@ def update_category(
 def delete_category(
     category_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_admin_or_manager),
+    _: models.User = Depends(require_admin),
 ):
     cat = db.query(models.ProductCategory).filter(models.ProductCategory.id == category_id).first()
     if not cat:
@@ -371,7 +372,7 @@ def enable_product(
 def delete_product(
     product_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_product_create_roles),
+    current_user: models.User = Depends(require_admin),
 ):
     p = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not p:

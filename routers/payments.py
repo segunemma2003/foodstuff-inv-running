@@ -28,7 +28,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import get_current_user, require_admin_or_manager
+from dependencies import get_current_user, require_admin_or_manager, require_admin
 import models
 import schemas
 from utils import audit
@@ -99,6 +99,50 @@ def list_payments(
     if payment_method:
         payment_query = payment_query.filter(models.Payment.payment_method == payment_method)
     return payment_query.order_by(models.Payment.created_at.desc()).offset(skip).limit(limit).all()
+
+
+@router.post("/bulk-delete", response_model=schemas.BulkDeleteResult)
+def bulk_delete_payments(
+    body: schemas.BulkIdsRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    result = schemas.BulkDeleteResult()
+    for pid in body.ids:
+        p = db.query(models.Payment).filter(models.Payment.id == pid).first()
+        if not p:
+            result.failed.append({"id": pid, "detail": "Payment not found"})
+            continue
+        inv = p.invoice
+        inv_no = inv.invoice_number if inv else ""
+        audit.log(db, models.AuditAction.delete, models.AuditEntity.payment, p.id,
+                   current_user.id, description=f"Deleted payment #{p.id} ({inv_no})")
+        db.delete(p)
+        if inv:
+            _recalculate_invoice_payment_status(inv, db)
+        result.deleted += 1
+    db.commit()
+    return result
+
+
+@router.delete("/{payment_id}", response_model=schemas.MessageResponse)
+def delete_payment(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    p = db.query(models.Payment).filter(models.Payment.id == payment_id).first()
+    if not p:
+        raise HTTPException(404, "Payment not found")
+    inv = p.invoice
+    inv_no = inv.invoice_number if inv else ""
+    audit.log(db, models.AuditAction.delete, models.AuditEntity.payment, p.id,
+               current_user.id, description=f"Deleted payment #{p.id} ({inv_no})")
+    db.delete(p)
+    if inv:
+        _recalculate_invoice_payment_status(inv, db)
+    db.commit()
+    return schemas.MessageResponse(message="Payment deleted")
 
 
 @router.get("/invoice/{invoice_id}/summary", response_model=schemas.InvoicePaymentSummary)

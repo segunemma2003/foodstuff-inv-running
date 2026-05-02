@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import get_current_user, require_not_analyst, require_admin_or_manager
+from dependencies import get_current_user, require_not_analyst, require_admin_or_manager, require_admin
 import models
 import schemas
 from utils import audit
@@ -281,6 +281,57 @@ def create_quotation(
     db.commit()
     db.refresh(quotation)
     return quotation
+
+
+@router.post("/bulk-delete", response_model=schemas.BulkDeleteResult)
+def bulk_delete_quotations(
+    body: schemas.BulkIdsRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    result = schemas.BulkDeleteResult()
+    for qid in body.ids:
+        quotation = db.query(models.Quotation).filter(models.Quotation.id == qid).first()
+        if not quotation:
+            result.failed.append({"id": qid, "detail": "Quotation not found"})
+            continue
+        linked = db.query(models.Invoice).filter(models.Invoice.quotation_id == quotation.id).first()
+        if linked:
+            result.failed.append({
+                "id": qid,
+                "detail": f"Converted to invoice {linked.invoice_number}; delete that invoice first",
+            })
+            continue
+        num = quotation.quotation_number
+        audit.log(db, models.AuditAction.delete, models.AuditEntity.quotation, quotation.id,
+                   current_user.id, description=f"Deleted quotation {num}")
+        db.delete(quotation)
+        result.deleted += 1
+    db.commit()
+    return result
+
+
+@router.delete("/{quotation_id}", response_model=schemas.MessageResponse)
+def delete_quotation(
+    quotation_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quotation:
+        raise HTTPException(404, "Quotation not found")
+    linked = db.query(models.Invoice).filter(models.Invoice.quotation_id == quotation.id).first()
+    if linked:
+        raise HTTPException(
+            400,
+            f"This quotation was converted to invoice {linked.invoice_number}. Delete that invoice first.",
+        )
+    num = quotation.quotation_number
+    audit.log(db, models.AuditAction.delete, models.AuditEntity.quotation, quotation.id,
+               current_user.id, description=f"Deleted quotation {num}")
+    db.delete(quotation)
+    db.commit()
+    return schemas.MessageResponse(message=f"Quotation {num} deleted")
 
 
 @router.get("/{quotation_id}", response_model=schemas.QuotationOut)

@@ -2,7 +2,7 @@ from __future__ import annotations
 from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, List, Any
-from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
 from models import UserRole, DeliveryType, QuotationStatus, InvoiceStatus, PricingRuleType, PaymentMethod, PaymentStatus
 
@@ -18,6 +18,15 @@ class PaginatedResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class BulkIdsRequest(BaseModel):
+    ids: List[int]
+
+
+class BulkDeleteResult(BaseModel):
+    deleted: int = 0
+    failed: List[dict] = Field(default_factory=list)
 
 
 # ─── Auth ────────────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, String
 
 from database import get_db
-from dependencies import get_current_user, require_not_analyst
+from dependencies import get_current_user, require_not_analyst, require_admin
 import models
 import schemas
 from utils import audit
@@ -119,7 +119,7 @@ def update_customer(
 def deactivate_customer(
     customer_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_not_analyst),
+    current_user: models.User = Depends(require_admin),
 ):
     c = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
     if not c:

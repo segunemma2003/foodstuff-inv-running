@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from database import get_db
-from dependencies import get_current_user, require_admin_or_manager, require_not_analyst
+from dependencies import get_current_user, require_admin_or_manager, require_not_analyst, require_admin
 import models
 import schemas
 from utils import audit
@@ -208,6 +208,58 @@ def list_invoices(
     if delivery_type:
         invoice_query = invoice_query.filter(models.Invoice.delivery_type == delivery_type)
     return invoice_query.order_by(models.Invoice.created_at.desc()).offset(skip).limit(limit).all()
+
+
+def _delete_invoice_record(
+    db: Session,
+    invoice_id: int,
+    current_user: models.User,
+) -> schemas.MessageResponse:
+    from utils.s3 import delete_object
+
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+
+    quotation_id = inv.quotation_id
+    inv_no = inv.invoice_number
+
+    for payment in list(inv.payments):
+        db.delete(payment)
+
+    if inv.custom_pdf_s3_key:
+        try:
+            delete_object(inv.custom_pdf_s3_key)
+        except Exception:
+            pass
+
+    audit.log(db, models.AuditAction.delete, models.AuditEntity.invoice, inv.id,
+               current_user.id, description=f"Deleted invoice {inv_no}")
+    db.delete(inv)
+
+    if quotation_id:
+        qt = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+        if qt and qt.status == models.QuotationStatus.converted:
+            qt.status = models.QuotationStatus.approved
+
+    return schemas.MessageResponse(message=f"Invoice {inv_no} deleted")
+
+
+@router.post("/bulk-delete", response_model=schemas.BulkDeleteResult)
+def bulk_delete_invoices(
+    body: schemas.BulkIdsRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    result = schemas.BulkDeleteResult()
+    for iid in body.ids:
+        try:
+            _delete_invoice_record(db, iid, current_user)
+            result.deleted += 1
+        except HTTPException as he:
+            result.failed.append({"id": iid, "detail": he.detail if isinstance(he.detail, str) else str(he.detail)})
+    db.commit()
+    return result
 
 
 @router.post("", response_model=schemas.InvoiceOut, status_code=201)
@@ -743,4 +795,14 @@ def cancel_invoice(
     db.refresh(inv)
     return inv
 
+
+@router.delete("/{invoice_id}", response_model=schemas.MessageResponse)
+def delete_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    msg = _delete_invoice_record(db, invoice_id, current_user)
+    db.commit()
+    return msg
 

@@ -292,6 +292,37 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
             import re
             return re.sub(r"[^a-z0-9]+", "", _norm(val))
 
+        def _parse_cost_price_cell(val):
+            """Accept numbers, Excel-formatted strings (1,000 $, ₦1,000, NGN 500, etc.)."""
+            from decimal import Decimal, InvalidOperation
+            import re
+            if val is None or val == "":
+                return None
+            if isinstance(val, bool):
+                return None
+            if isinstance(val, (int, float)):
+                try:
+                    return Decimal(str(val))
+                except InvalidOperation:
+                    return None
+            s = str(val).strip()
+            if not s:
+                return None
+            s = s.replace("\u00a0", " ").replace(",", "")
+            for token in (
+                "NGN", "ngn", "N ", "$", "USD", "usd", "₦", "£", "€",
+            ):
+                s = s.replace(token, "")
+            s = s.strip()
+            m = re.search(r"-?\d+(?:\.\d+)?", s)
+            if not m:
+                return None
+            try:
+                d = Decimal(m.group(0))
+                return d if d >= 0 else None
+            except InvalidOperation:
+                return None
+
         def _generate_unique_sku(product_name: str, resolved_market_id: int | None) -> str:
             import re
             base_name = re.sub(r"[^A-Z0-9]+", "-", str(product_name or "").upper()).strip("-") or "PRODUCT"
@@ -315,6 +346,11 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
 
             if cost_price is None or not product_name or not market_name or not uom:
                 errors.append(f"Row {row_num}: required columns are product_name, uom, market_name, cost_price")
+                continue
+
+            parsed_price = _parse_cost_price_cell(cost_price)
+            if parsed_price is None:
+                errors.append(f"Row {row_num}: invalid cost_price {cost_price!r} — use a plain number (commas / ₦ / $ are OK)")
                 continue
 
             market = db.query(models.ProductCategory).filter(
@@ -365,7 +401,7 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
 
             db.add(models.CostPrice(
                 product_id=product.id,
-                cost_price=cost_price,
+                cost_price=parsed_price,
                 effective_date=date_type.today(),
                 notes=None,
                 created_by=user_id,
