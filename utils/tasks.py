@@ -273,6 +273,8 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
     The S3 object is deleted after processing (success or failure).
     """
     from io import BytesIO
+    import re
+    from decimal import Decimal, InvalidOperation
     from database import SessionLocal
     import models
     import openpyxl
@@ -296,13 +298,9 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
             return " ".join(str(val).strip().lower().split())
 
         def _norm_key(val):
-            import re
             return re.sub(r"[^a-z0-9]+", "", _norm(val))
 
         def _parse_cost_price_cell(val):
-            """Accept numbers, Excel-formatted strings (1,000 $, ₦1,000, NGN 500, etc.)."""
-            from decimal import Decimal, InvalidOperation
-            import re
             if val is None or val == "":
                 return None
             if isinstance(val, bool):
@@ -315,10 +313,8 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
             s = str(val).strip()
             if not s:
                 return None
-            s = s.replace("\u00a0", " ").replace(",", "")
-            for token in (
-                "NGN", "ngn", "N ", "$", "USD", "usd", "₦", "£", "€",
-            ):
+            s = s.replace(" ", " ").replace(",", "")
+            for token in ("NGN", "ngn", "N ", "$", "USD", "usd", "₦", "£", "€"):
                 s = s.replace(token, "")
             s = s.strip()
             m = re.search(r"-?\d+(?:\.\d+)?", s)
@@ -329,19 +325,6 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 return d if d >= 0 else None
             except InvalidOperation:
                 return None
-
-        def _generate_unique_sku(product_name: str, resolved_market_id: int | None) -> str:
-            import re
-            base_name = re.sub(r"[^A-Z0-9]+", "-", str(product_name or "").upper()).strip("-") or "PRODUCT"
-            base_name = base_name[:24]
-            market_part = f"M{resolved_market_id}" if resolved_market_id else "M0"
-            counter = 1
-            while True:
-                candidate = f"{base_name}-{market_part}-{counter:03d}"
-                exists = db.query(models.Product).filter(models.Product.sku == candidate).first()
-                if not exists:
-                    return candidate
-                counter += 1
 
         def _cell_as_text(val):
             if val is None:
@@ -358,6 +341,55 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
             if isinstance(val, str) and not val.strip():
                 return True
             return False
+
+        # Pre-load all markets and products (2 queries total instead of N per row)
+        market_by_norm: dict = {
+            _norm(m.name): m
+            for m in db.query(models.ProductCategory).all()
+        }
+
+        all_products = db.query(models.Product).all()
+        # (norm_name, cat_id, norm_uom) -> product  — strict match
+        product_strict: dict = {}
+        # (norm_name, cat_id) -> [product, ...]      — name+market fallback
+        product_by_nm: dict = {}
+        # (norm_key, cat_id) -> [product, ...]       — tolerant name fallback
+        product_by_key: dict = {}
+        existing_skus: set = set()
+
+        for p in all_products:
+            k = (_norm(p.product_name), p.category_id, _norm(p.unit_of_measure or ""))
+            product_strict[k] = p
+            k_nm = (_norm(p.product_name), p.category_id)
+            product_by_nm.setdefault(k_nm, []).append(p)
+            k_key = (_norm_key(p.product_name), p.category_id)
+            product_by_key.setdefault(k_key, []).append(p)
+            if p.sku:
+                existing_skus.add(p.sku)
+
+        def _generate_unique_sku(product_name: str, resolved_market_id: int | None) -> str:
+            base_name = re.sub(r"[^A-Z0-9]+", "-", str(product_name or "").upper()).strip("-") or "PRODUCT"
+            base_name = base_name[:24]
+            market_part = f"M{resolved_market_id}" if resolved_market_id else "M0"
+            counter = 1
+            while True:
+                candidate = f"{base_name}-{market_part}-{counter:03d}"
+                if candidate not in existing_skus:
+                    existing_skus.add(candidate)
+                    return candidate
+                counter += 1
+
+        def _register_product(p) -> None:
+            """Keep in-memory caches consistent when a new product is created."""
+            k = (_norm(p.product_name), p.category_id, _norm(p.unit_of_measure or ""))
+            product_strict[k] = p
+            k_nm = (_norm(p.product_name), p.category_id)
+            product_by_nm.setdefault(k_nm, []).append(p)
+            k_key = (_norm_key(p.product_name), p.category_id)
+            product_by_key.setdefault(k_key, []).append(p)
+
+        # Collect new products so we can flush them all at once at the end.
+        pending_new: list = []
 
         consecutive_blank_rows = 0
         BLANK_ROW_STOP = 3
@@ -389,41 +421,23 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 errors.append(f"Row {row_num}: invalid cost_price {cost_price!r} — use a plain number (commas / ₦ / $ are OK)")
                 continue
 
-            market = db.query(models.ProductCategory).filter(
-                func.lower(func.trim(models.ProductCategory.name)) == _norm(market_name)
-            ).first()
+            market = market_by_norm.get(_norm(market_name))
             if not market:
                 errors.append(f"Row {row_num}: market '{market_name}' not found")
                 continue
 
             # Prefer strict match: product + market + uom
-            product = db.query(models.Product).filter(
-                func.lower(func.trim(models.Product.product_name)) == _norm(product_name),
-                models.Product.category_id == market.id,
-                func.lower(func.trim(func.coalesce(models.Product.unit_of_measure, ""))) == _norm(uom),
-            ).first()
+            product = product_strict.get((_norm(product_name), market.id, _norm(uom)))
 
-            # Fallback: if UOM does not match exactly, resolve by product+market
-            # when this identifies a single product record.
+            # Fallback: resolve by product+market when that identifies a single record
             if not product:
-                by_name = db.query(models.Product).filter(
-                    func.lower(func.trim(models.Product.product_name)) == _norm(product_name),
-                    models.Product.category_id == market.id,
-                ).all()
+                by_name = product_by_nm.get((_norm(product_name), market.id), [])
                 if not by_name:
                     # Last-resort tolerant name match (ignores spaces/punctuation like "50kg" vs "50 kg")
-                    candidates = db.query(models.Product).filter(
-                        models.Product.category_id == market.id
-                    ).all()
-                    target_key = _norm_key(product_name)
-                    by_name = [p for p in candidates if _norm_key(p.product_name) == target_key]
+                    by_name = product_by_key.get((_norm_key(product_name), market.id), [])
                 if len(by_name) == 1:
                     product = by_name[0]
-                elif len(by_name) > 1:
-                    available_uoms = sorted({(p.unit_of_measure or "").strip() or "—" for p in by_name})
-                    # If multiple products share name and none matched exactly by uom,
-                    # create a new product record using the provided uom.
-                    pass
+                # elif > 1: fall through and create a new record with the provided uom
 
             if not product:
                 product = models.Product(
@@ -433,7 +447,10 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                     category_id=market.id,
                 )
                 db.add(product)
-                db.flush()
+                _register_product(product)
+                pending_new.append((product, parsed_price))
+                created += 1
+                continue
 
             if product.category_id != market.id:
                 errors.append(
@@ -450,6 +467,18 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
             ))
             created += 1
 
+        # Single flush to assign IDs to all newly created products, then create their CostPrices.
+        if pending_new:
+            db.flush()
+            for new_product, price in pending_new:
+                db.add(models.CostPrice(
+                    product_id=new_product.id,
+                    cost_price=price,
+                    effective_date=date_type.today(),
+                    notes=None,
+                    created_by=user_id,
+                ))
+
         db.commit()
         return {"created": created, "errors": errors}
     except Exception:
@@ -458,7 +487,6 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
     finally:
         db.close()
         delete_object(s3_key)
-
 
 @celery_app.task(
     bind=True,
