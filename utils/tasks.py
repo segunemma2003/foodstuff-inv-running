@@ -258,8 +258,15 @@ def send_invoice_to_recipients_task(self, invoice_id: int, recipients: list[str]
 
 
 # ─── Bulk uploads ─────────────────────────────────────────────────────────────
+# Global celery_app defaults are 90s / 120s (celery_app.py). Excel imports can exceed
+# that for large files or slow DB; these tasks override with longer limits.
 
-@celery_app.task(bind=True, name="process_cost_price_bulk")
+@celery_app.task(
+    bind=True,
+    name="process_cost_price_bulk",
+    soft_time_limit=900,
+    time_limit=960,
+)
 def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
     """
     Download an Excel file from S3, parse cost price records, insert into DB.
@@ -418,7 +425,12 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
         delete_object(s3_key)
 
 
-@celery_app.task(bind=True, name="process_product_bulk")
+@celery_app.task(
+    bind=True,
+    name="process_product_bulk",
+    soft_time_limit=900,
+    time_limit=960,
+)
 def process_product_bulk_task(self, s3_key: str, user_id: int, market_id: int | None = None):
     """Download an Excel file from S3, parse and insert product records."""
     from io import BytesIO
@@ -516,7 +528,12 @@ def process_product_bulk_task(self, s3_key: str, user_id: int, market_id: int | 
         delete_object(s3_key)
 
 
-@celery_app.task(bind=True, name="process_invoice_bulk_task")
+@celery_app.task(
+    bind=True,
+    name="process_invoice_bulk_task",
+    soft_time_limit=900,
+    time_limit=960,
+)
 def process_invoice_bulk_task(self, s3_key: str, user_id: int):
     """
     Parse an Excel invoice import file and create invoices + line items.

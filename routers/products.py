@@ -379,9 +379,6 @@ def delete_product(
         raise HTTPException(404, "Product not found")
     name = p.product_name
 
-    linked_cost_prices = db.query(func.count(models.CostPrice.id)).filter(
-        models.CostPrice.product_id == p.id
-    ).scalar() or 0
     linked_quotation_items = db.query(func.count(models.QuotationItem.id)).filter(
         models.QuotationItem.product_id == p.id
     ).scalar() or 0
@@ -389,8 +386,9 @@ def delete_product(
         models.InvoiceItem.product_id == p.id
     ).scalar() or 0
 
-    if linked_cost_prices or linked_quotation_items or linked_invoice_items:
-        # Keep historical references intact; deactivate instead of hard-delete.
+    # Only quotation/invoice line items block hard delete (they snapshot commercial history).
+    # Cost price rows are removed when the product is deleted.
+    if linked_quotation_items or linked_invoice_items:
         p.is_active = False
         audit.log(
             db,
@@ -398,10 +396,9 @@ def delete_product(
             models.AuditEntity.product,
             product_id,
             current_user.id,
-            description=f"Deactivated product {name} (linked to historical records)",
+            description=f"Deactivated product {name} (linked to quotations or invoices)",
             new_values={
                 "is_active": False,
-                "linked_cost_prices": linked_cost_prices,
                 "linked_quotation_items": linked_quotation_items,
                 "linked_invoice_items": linked_invoice_items,
             },
@@ -411,16 +408,23 @@ def delete_product(
             message="Product is used in existing records and was disabled instead of deleted"
         )
 
-    db.delete(p)
-    db.commit()
+    removed_cost_prices = (
+        db.query(models.CostPrice).filter(models.CostPrice.product_id == p.id).delete(
+            synchronize_session=False
+        )
+    )
+
     audit.log(
         db,
         models.AuditAction.delete,
         models.AuditEntity.product,
         product_id,
         current_user.id,
-        description=f"Deleted product {name}",
+        description=f"Deleted product {name}" + (f" ({removed_cost_prices} cost price row(s) removed)" if removed_cost_prices else ""),
+        new_values={"cost_price_rows_removed": removed_cost_prices} if removed_cost_prices else None,
     )
+    db.delete(p)
+    db.commit()
     return schemas.MessageResponse(message="Product deleted")
 
 
