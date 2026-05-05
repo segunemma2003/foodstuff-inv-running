@@ -143,6 +143,8 @@ def _build_invoice_from_quotation(
         due = today + timedelta(days=60)
     elif quotation.payment_term == "net_15":
         due = today + timedelta(days=15)
+    elif quotation.payment_term == "net_90":
+        due = today + timedelta(days=90)
 
     invoice = models.Invoice(
         invoice_number=next_invoice_number(db),
