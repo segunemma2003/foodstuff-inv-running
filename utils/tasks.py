@@ -465,6 +465,13 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 )
                 continue
 
+            # product.id is None when this product was just created earlier in
+            # this same file run and hasn't been flushed yet. Defer to pending_new.
+            if product.id is None:
+                pending_new.append((product, parsed_price))
+                created += 1
+                continue
+
             db.add(models.CostPrice(
                 product_id=product.id,
                 cost_price=parsed_price,
