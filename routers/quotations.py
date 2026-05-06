@@ -8,7 +8,13 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import get_current_user, require_not_analyst, require_admin_or_manager, require_admin
+from dependencies import (
+    get_current_user,
+    require_not_analyst,
+    require_admin_or_manager,
+    require_admin_manager_or_operations,
+    require_admin,
+)
 import models
 import schemas
 from utils import audit
@@ -413,7 +419,7 @@ def submit_quotation(
 def approve_quotation(
     quotation_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin_or_manager),
+    current_user: models.User = Depends(require_admin_manager_or_operations),
 ):
     quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
     if not quotation:
@@ -448,7 +454,7 @@ def reject_quotation(
     quotation_id: int,
     body: schemas.QuotationRejectRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin_or_manager),
+    current_user: models.User = Depends(require_admin_manager_or_operations),
 ):
     quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
     if not quotation:

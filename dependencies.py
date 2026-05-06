@@ -40,6 +40,7 @@ def require_roles(*roles: str):
 
 require_admin = require_roles("admin")
 require_admin_or_manager = require_roles("admin", "manager")
+require_admin_manager_or_operations = require_roles("admin", "manager", "operations")
 require_not_analyst = require_roles("admin", "manager", "sales")
 require_admin_manager_sales = require_roles("admin", "manager", "sales")
 require_market_view_roles = require_roles("admin", "manager", "sales", "analyst", "operations")
