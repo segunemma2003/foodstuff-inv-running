@@ -97,7 +97,7 @@ def _notify_approvers(db: Session, quotation: models.Quotation, created_by_name:
     approvers = (
         db.query(models.User)
         .filter(
-            models.User.is_(True),
+            models.User.is_active == True,
             models.User.role.in_([models.UserRole.admin, models.UserRole.manager]),
             models.User.email.is_not(None),
         )
@@ -240,7 +240,7 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
         db.query(models.Customer)
         .filter(
             models.Customer.id == body.customer_id,
-            models.Customer.is_(True),
+            models.Customer.is_active == True,
         )
         .first()
     )
