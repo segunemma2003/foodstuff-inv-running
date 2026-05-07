@@ -284,7 +284,7 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
     db = SessionLocal()
     try:
         raw = download_bytes(s3_key)
-        wb = openpyxl.load_workbook(BytesIO(raw))
+        wb = openpyxl.load_workbook(BytesIO(raw), read_only=True, data_only=True)
         ws = wb.active
         headers = [
             str(c.value).strip().lower() if c.value else ""
@@ -517,7 +517,7 @@ def process_product_bulk_task(self, s3_key: str, user_id: int, market_id: int | 
     db = SessionLocal()
     try:
         raw = download_bytes(s3_key)
-        wb = openpyxl.load_workbook(BytesIO(raw))
+        wb = openpyxl.load_workbook(BytesIO(raw), read_only=True, data_only=True)
         ws = wb.active
         headers = [
             str(c.value).strip().lower() if c.value else ""
@@ -631,7 +631,7 @@ def process_invoice_bulk_task(self, s3_key: str, user_id: int):
     db = SessionLocal()
     try:
         raw = download_bytes(s3_key)
-        wb = openpyxl.load_workbook(BytesIO(raw), data_only=True)
+        wb = openpyxl.load_workbook(BytesIO(raw), read_only=True, data_only=True)
         ws = wb.active
         headers = [
             str(c.value).strip().lower().replace(" ", "_") if c.value else ""
