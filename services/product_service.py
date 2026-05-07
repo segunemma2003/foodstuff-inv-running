@@ -294,6 +294,32 @@ def get_product(db: Session, product_id: int) -> schemas.ProductOut:
     return enrich_product(p, db)
 
 
+def list_product_variants(db: Session, product_id: int) -> List[schemas.ProductVariantOut]:
+    anchor = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not anchor:
+        raise HTTPException(404, "Product not found")
+    name_key = anchor.product_name.strip().lower()
+    rows = (
+        db.query(models.Product)
+        .filter(
+            models.Product.category_id == anchor.category_id,
+            func.lower(models.Product.product_name) == name_key,
+            models.Product.is_active == True,
+        )
+        .order_by(func.coalesce(models.Product.unit_of_measure, ""))
+        .all()
+    )
+    return [
+        schemas.ProductVariantOut(
+            id=p.id,
+            product_name=p.product_name,
+            unit_of_measure=p.unit_of_measure,
+            sku=p.sku,
+        )
+        for p in rows
+    ]
+
+
 def update_product(
     db: Session, product_id: int, body: schemas.ProductUpdate, current_user: models.User
 ) -> schemas.ProductOut:

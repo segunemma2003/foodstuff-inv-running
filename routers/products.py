@@ -147,6 +147,15 @@ def get_product(
     return product_service.get_product(db, product_id)
 
 
+@router.get("/{product_id}/variants", response_model=List[schemas.ProductVariantOut])
+def list_product_variants(
+    product_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    return product_service.list_product_variants(db, product_id)
+
+
 @router.put("/{product_id}", response_model=schemas.ProductOut)
 def update_product(
     product_id: int,

@@ -216,6 +216,17 @@ class ProductListPage(BaseModel):
     items: List[ProductOut]
 
 
+class ProductVariantOut(BaseModel):
+    """Same market + product name, different unit (for quotation UOM selection)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    product_name: str
+    unit_of_measure: Optional[str] = None
+    sku: Optional[str] = None
+
+
 # ─── Cost Prices ─────────────────────────────────────────────────────────────
 
 class CostPriceCreate(BaseModel):

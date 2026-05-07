@@ -47,3 +47,4 @@ require_market_view_roles = require_roles("admin", "manager", "sales", "analyst"
 require_market_manage_roles = require_roles("admin", "manager", "operations")
 require_product_upload_roles = require_roles("admin", "manager", "operations")
 require_product_create_roles = require_roles("admin", "manager", "sales", "operations")
+require_customer_manage_roles = require_roles("admin", "manager", "sales", "operations")

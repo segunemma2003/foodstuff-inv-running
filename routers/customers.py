@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import get_current_user, require_not_analyst, require_admin
+from dependencies import get_current_user, require_customer_manage_roles, require_admin
 import models
 import schemas
 from services import customer_service
@@ -32,7 +32,7 @@ def list_customers(
 def create_customer(
     body: schemas.CustomerCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_not_analyst),
+    current_user: models.User = Depends(require_customer_manage_roles),
 ):
     return customer_service.create_customer(db, body, current_user)
 
@@ -51,7 +51,7 @@ def update_customer(
     customer_id: int,
     body: schemas.CustomerUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_not_analyst),
+    current_user: models.User = Depends(require_customer_manage_roles),
 ):
     return customer_service.update_customer(db, customer_id, body, current_user)
 

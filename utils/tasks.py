@@ -297,9 +297,6 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 return ""
             return " ".join(str(val).strip().lower().split())
 
-        def _norm_key(val):
-            return re.sub(r"[^a-z0-9]+", "", _norm(val))
-
         def _parse_cost_price_cell(val):
             if val is None or val == "":
                 return None
@@ -356,21 +353,13 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 market_by_norm[key] = m
 
         all_products = db.query(models.Product).all()
-        # (norm_name, cat_id, norm_uom) -> product  — strict match
+        # (norm_name, cat_id, norm_uom) -> product — strict match only (no ambiguous fallback)
         product_strict: dict = {}
-        # (norm_name, cat_id) -> [product, ...]      — name+market fallback
-        product_by_nm: dict = {}
-        # (norm_key, cat_id) -> [product, ...]       — tolerant name fallback
-        product_by_key: dict = {}
         existing_skus: set = set()
 
         for p in all_products:
             k = (_norm(p.product_name), p.category_id, _norm(p.unit_of_measure or ""))
             product_strict[k] = p
-            k_nm = (_norm(p.product_name), p.category_id)
-            product_by_nm.setdefault(k_nm, []).append(p)
-            k_key = (_norm_key(p.product_name), p.category_id)
-            product_by_key.setdefault(k_key, []).append(p)
             if p.sku:
                 existing_skus.add(p.sku)
 
@@ -390,10 +379,6 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
             """Keep in-memory caches consistent when a new product is created."""
             k = (_norm(p.product_name), p.category_id, _norm(p.unit_of_measure or ""))
             product_strict[k] = p
-            k_nm = (_norm(p.product_name), p.category_id)
-            product_by_nm.setdefault(k_nm, []).append(p)
-            k_key = (_norm_key(p.product_name), p.category_id)
-            product_by_key.setdefault(k_key, []).append(p)
 
         # Collect new products so we can flush them all at once at the end.
         pending_new: list = []
@@ -433,18 +418,7 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 errors.append(f"Row {row_num}: market '{market_name}' not found")
                 continue
 
-            # Prefer strict match: product + market + uom
             product = product_strict.get((_norm(product_name), market.id, _norm(uom)))
-
-            # Fallback: resolve by product+market when that identifies a single record
-            if not product:
-                by_name = product_by_nm.get((_norm(product_name), market.id), [])
-                if not by_name:
-                    # Last-resort tolerant name match (ignores spaces/punctuation like "50kg" vs "50 kg")
-                    by_name = product_by_key.get((_norm_key(product_name), market.id), [])
-                if len(by_name) == 1:
-                    product = by_name[0]
-                # elif > 1: fall through and create a new record with the provided uom
 
             if not product:
                 product = models.Product(
