@@ -353,13 +353,16 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 market_by_norm[key] = m
 
         all_products = db.query(models.Product).all()
-        # (norm_name, cat_id, norm_uom) -> product — strict match only (no ambiguous fallback)
+        # (norm_name, cat_id, norm_uom) -> product — strict match
         product_strict: dict = {}
+        # (norm_name, cat_id) -> [product, ...] — name+market fallback when UOM differs slightly
+        product_by_nm: dict = {}
         existing_skus: set = set()
 
         for p in all_products:
             k = (_norm(p.product_name), p.category_id, _norm(p.unit_of_measure or ""))
             product_strict[k] = p
+            product_by_nm.setdefault((_norm(p.product_name), p.category_id), []).append(p)
             if p.sku:
                 existing_skus.add(p.sku)
 
@@ -379,6 +382,7 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
             """Keep in-memory caches consistent when a new product is created."""
             k = (_norm(p.product_name), p.category_id, _norm(p.unit_of_measure or ""))
             product_strict[k] = p
+            product_by_nm.setdefault((_norm(p.product_name), p.category_id), []).append(p)
 
         # Collect new products so we can flush them all at once at the end.
         pending_new: list = []
@@ -405,7 +409,7 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
                 continue
             consecutive_blank_rows = 0
 
-            if cost_price is None or not product_name or not market_name or not uom:
+            if cost_price is None or not product_name or not market_name:
                 continue
 
             parsed_price = _parse_cost_price_cell(cost_price)
@@ -420,11 +424,31 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
 
             product = product_strict.get((_norm(product_name), market.id, _norm(uom)))
 
+            # Fallback: name + market match when UOM in CSV differs slightly from stored value
             if not product:
+                by_name = product_by_nm.get((_norm(product_name), market.id), [])
+                if len(by_name) == 1:
+                    # Only one variant exists — safe to use regardless of UOM difference
+                    product = by_name[0]
+                elif len(by_name) > 1 and uom:
+                    # Multiple UOM variants exist — try tolerant UOM match (strip spaces/punctuation)
+                    # e.g. "50 kg" matches "50kg", "25L" matches "25l"
+                    slug = lambda v: re.sub(r"[^a-z0-9]+", "", _norm(v or ""))
+                    candidates = [p for p in by_name if slug(p.unit_of_measure) == slug(uom)]
+                    if len(candidates) == 1:
+                        product = candidates[0]
+
+            if not product:
+                if not uom:
+                    errors.append(
+                        f"Row {row_num}: product '{product_name}' not found in market '{market_name}' "
+                        f"— unit_of_measure is required to create a new product"
+                    )
+                    continue
                 product = models.Product(
                     product_name=str(product_name).strip(),
                     sku=_generate_unique_sku(str(product_name).strip(), market.id),
-                    unit_of_measure=str(uom).strip() if uom is not None else None,
+                    unit_of_measure=str(uom).strip(),
                     category_id=market.id,
                 )
                 db.add(product)
