@@ -19,11 +19,13 @@ def _product_name_exists_in_market(
     db: Session,
     product_name: str,
     market_id: Optional[int],
+    unit_of_measure: Optional[str] = None,
     exclude_product_id: Optional[int] = None,
 ) -> bool:
     existing_product_query = db.query(models.Product).filter(
         func.lower(models.Product.product_name) == product_name.strip().lower(),
         models.Product.category_id == market_id,
+        func.lower(func.coalesce(models.Product.unit_of_measure, "")) == (unit_of_measure or "").strip().lower(),
     )
     if exclude_product_id is not None:
         existing_product_query = existing_product_query.filter(models.Product.id != exclude_product_id)
@@ -256,7 +258,8 @@ def create_product(db: Session, body: schemas.ProductCreate, current_user: model
         raise HTTPException(400, "SKU already exists")
     product_name = str(payload.get("product_name") or "").strip()
     market_for_unique = payload.get("category_id")
-    if product_name and _product_name_exists_in_market(db, product_name, market_for_unique):
+    uom_for_unique = str(payload.get("unit_of_measure") or "").strip()
+    if product_name and _product_name_exists_in_market(db, product_name, market_for_unique, unit_of_measure=uom_for_unique):
         existing = db.query(models.Product).filter(
             func.lower(models.Product.product_name) == product_name.lower(),
             models.Product.category_id == market_for_unique,
@@ -332,7 +335,8 @@ def update_product(
         payload["category_id"] = selected_market
     next_name = str(payload.get("product_name", p.product_name) or "").strip()
     next_market = payload.get("category_id", p.category_id)
-    if next_name and _product_name_exists_in_market(db, next_name, next_market, exclude_product_id=p.id):
+    next_uom = str(payload.get("unit_of_measure", p.unit_of_measure) or "").strip()
+    if next_name and _product_name_exists_in_market(db, next_name, next_market, unit_of_measure=next_uom, exclude_product_id=p.id):
         raise HTTPException(400, "Product name already exists in this market")
     old = {k: str(getattr(p, k)) for k in payload}
     for field, value in payload.items():
