@@ -424,16 +424,17 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
 
             product = product_strict.get((_norm(product_name), market.id, _norm(uom)))
 
-            # Fallback: name + market match when UOM in CSV differs slightly from stored value
+            # Fallback: tolerant UOM match (handles "50 kg" vs "50kg", "Bag" vs "bag")
+            # Never matches across genuinely different UOMs (e.g. "bag" vs "piece")
             if not product:
+                slug = lambda v: re.sub(r"[^a-z0-9]+", "", _norm(v or ""))
                 by_name = product_by_nm.get((_norm(product_name), market.id), [])
                 if len(by_name) == 1:
-                    # Only one variant exists — safe to use regardless of UOM difference
-                    product = by_name[0]
+                    single = by_name[0]
+                    # Use only when CSV has no UOM (ambiguous row) or UOM slugs are equal
+                    if not uom or slug(single.unit_of_measure) == slug(uom):
+                        product = single
                 elif len(by_name) > 1 and uom:
-                    # Multiple UOM variants exist — try tolerant UOM match (strip spaces/punctuation)
-                    # e.g. "50 kg" matches "50kg", "25L" matches "25l"
-                    slug = lambda v: re.sub(r"[^a-z0-9]+", "", _norm(v or ""))
                     candidates = [p for p in by_name if slug(p.unit_of_measure) == slug(uom)]
                     if len(candidates) == 1:
                         product = candidates[0]
