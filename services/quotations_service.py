@@ -204,8 +204,8 @@ def preview_price(body: List[schemas.PricePreviewRequest], db: Session) -> List[
                 product_id=req.product_id,
                 product_name=product.product_name if product else "",
                 quantity=qty,
-                cost_price=float(cost),
-                line_total=round(qty * pricing["unit_price"], 2),
+                cost_price=int(cost),
+                line_total=round(qty * pricing["unit_price"]),
                 **pricing,
             )
         )

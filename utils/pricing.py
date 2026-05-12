@@ -85,7 +85,7 @@ def calculate_item_price(
 
     # Delivery markup (only if delivery)
     delivery_pct = Decimal("0")
-    delivery_amount = Decimal("0")
+    delivery_amount = 0
     if delivery_type == models.DeliveryType.delivery or delivery_type == "delivery":
         delivery_rule = rules.get("delivery")
         if delivery_rule:
@@ -94,7 +94,7 @@ def calculate_item_price(
 
     # Payment term markup
     pt_pct = Decimal("0")
-    pt_amount = Decimal("0")
+    pt_amount = 0
     pt_rules = rules.get("payment_terms", {})
     if payment_term in pt_rules:
         pt_rule = pt_rules[payment_term]
