@@ -35,9 +35,9 @@ def _calc_and_build_items(
     delivery_type: str,
     payment_term: str,
     db: Session,
-) -> tuple[List[models.QuotationItem], Decimal]:
+) -> tuple[List[models.QuotationItem], int]:
     rules = get_active_rules(db)
-    built, total = [], Decimal("0")
+    built, total = [], 0
 
     for it in items_in:
         cost = get_current_cost(it.product_id, db)
@@ -60,9 +60,9 @@ def _calc_and_build_items(
         base_price = it.unit_price_override if it.unit_price_override is not None else pricing["unit_price"]
         discount_pct = Decimal(str(it.discount_pct or 0))
         # discount = unit_price * discount_pct% (applied per unit, then multiplied by qty)
-        unit_price = round(base_price * (1 - float(discount_pct) / 100))  # kobo
-        line_total = round(float(qty) * unit_price)                         # kobo
-        total += line_total
+        unit_price = int(round(base_price * (1 - float(discount_pct) / 100)))  # kobo
+        line_total = int(round(float(qty) * unit_price))                       # kobo
+         total += line_total
 
         uom = it.uom
         if not uom:
@@ -107,7 +107,7 @@ def _notify_approvers(db: Session, quotation: models.Quotation, created_by_name:
     subject, html, text = tpl_quotation_submitted(
         quotation.quotation_number,
         quotation.customer.customer_name if quotation.customer else "",
-        float(quotation.total_amount),
+        quotation.total_amount / 100,
         created_by_name,
     )
     for approver in approvers:
@@ -147,7 +147,7 @@ def _build_invoice_from_quotation(
         payment_term=quotation.payment_term,
         due_date=due,
         delivery_type=quotation.delivery_type,
-        delivery_fee=quotation.delivery_fee or Decimal("0"),
+        delivery_fee=quotation.delivery_fee or 0,
         total_amount=quotation.total_amount,
         notes=quotation.notes,
         created_by=actor_user.id,
@@ -252,7 +252,7 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
         raise HTTPException(400, "Quotation must have at least one item")
 
     items, subtotal = _calc_and_build_items(body.items, body.delivery_type, body.payment_term, db)
-    delivery_fee = Decimal(str(body.delivery_fee or 0))
+    delivery_fee = int(body.delivery_fee or 0)
     total = subtotal + delivery_fee
     quotation = models.Quotation(
         quotation_number=next_quotation_number(db),
@@ -612,7 +612,7 @@ def convert_to_invoice(db: Session, quotation_id: int, current_user: models.User
             invoice.invoice_number,
             quotation.quotation_number,
             quotation.customer.customer_name if quotation.customer else "",
-            float(invoice.total_amount),
+            invoice.total_amount / 100,
         )
         send_email_task.delay(current_user.email, subj, html, text)
 

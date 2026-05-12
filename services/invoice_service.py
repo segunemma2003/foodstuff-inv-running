@@ -258,7 +258,7 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
         raise HTTPException(400, f"Invalid delivery_type '{body.delivery_type}'")
 
     line_items = []
-    total_amount = 0.0
+    total_amount = 0
 
     for item in body.items:
         product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
@@ -275,10 +275,10 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
             .order_by(models.CostPrice.effective_date.desc())
             .first()
         )
-        cost_price = float(latest_cost.cost_price) if latest_cost else 0.0
-        unit_price = float(item.unit_price)
+        cost_price = int(latest_cost.cost_price) if latest_cost else 0
+        unit_price = int(item.unit_price)
         quantity = float(item.quantity)
-        line_total = unit_price * quantity
+        line_total = int(round(unit_price * quantity))
         total_amount += line_total
 
         line_items.append(
