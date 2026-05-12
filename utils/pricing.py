@@ -26,6 +26,7 @@ def get_active_rules(db: Session) -> dict:
     rules = (
         db.query(models.PricingRule)
         .filter(models.PricingRule.is_active == True)
+        .order_by(models.PricingRule.effective_date.asc())
         .all()
     )
     supply_rule = None
