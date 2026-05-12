@@ -3,7 +3,7 @@ from datetime import datetime, date
 from decimal import Decimal
 
 from sqlalchemy import (
-    Column, Integer, String, Numeric, Boolean, DateTime,
+    Column, Integer, BigInteger, String, Numeric, Boolean, DateTime,
     Date, Text, ForeignKey, Enum as SAEnum, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
@@ -171,7 +171,7 @@ class CostPrice(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    cost_price = Column(Numeric(15, 2), nullable=False)
+    cost_price = Column(BigInteger, nullable=False)
     effective_date = Column(Date, nullable=False)
     notes = Column(Text)
     created_by = Column(Integer, ForeignKey("users.id"))
@@ -212,7 +212,8 @@ class Quotation(Base):
     payment_term = Column(String(50), nullable=False)
     status = Column(SAEnum(QuotationStatus), default=QuotationStatus.draft)
     notes = Column(Text)
-    total_amount = Column(Numeric(15, 2), default=0)
+    delivery_fee = Column(BigInteger, default=0)
+    total_amount = Column(BigInteger, default=0)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     approved_by = Column(Integer, ForeignKey("users.id"))
     approved_at = Column(DateTime)
@@ -245,15 +246,16 @@ class QuotationItem(Base):
     quantity = Column(Numeric(15, 3), nullable=False)
     uom = Column(String(50), nullable=True)
     # Pricing snapshot
-    cost_price = Column(Numeric(15, 2), nullable=False)
+    cost_price = Column(BigInteger, nullable=False)
     supply_markup_pct = Column(Numeric(6, 3), nullable=False)
-    supply_markup_amount = Column(Numeric(15, 2), nullable=False)
+    supply_markup_amount = Column(BigInteger, nullable=False)
     delivery_markup_pct = Column(Numeric(6, 3), default=0)
-    delivery_markup_amount = Column(Numeric(15, 2), default=0)
+    delivery_markup_amount = Column(BigInteger, default=0)
     payment_term_markup_pct = Column(Numeric(6, 3), default=0)
-    payment_term_markup_amount = Column(Numeric(15, 2), default=0)
-    unit_price = Column(Numeric(15, 2), nullable=False)
-    line_total = Column(Numeric(15, 2), nullable=False)
+    payment_term_markup_amount = Column(BigInteger, default=0)
+    discount_pct = Column(Numeric(6, 3), nullable=False, default=0)
+    unit_price = Column(BigInteger, nullable=False)
+    line_total = Column(BigInteger, nullable=False)
 
     quotation = relationship("Quotation", back_populates="items")
     product = relationship("Product", back_populates="quotation_items")
@@ -276,8 +278,9 @@ class Invoice(Base):
     delivery_type = Column(SAEnum(DeliveryType), nullable=False)
     status = Column(SAEnum(InvoiceStatus), default=InvoiceStatus.active)
     notes = Column(Text)
-    total_amount = Column(Numeric(15, 2), default=0)
-    amount_paid = Column(Numeric(15, 2), default=0)
+    delivery_fee = Column(BigInteger, default=0)
+    total_amount = Column(BigInteger, default=0)
+    amount_paid = Column(BigInteger, default=0)
     custom_pdf_s3_key = Column(String(255), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -302,15 +305,15 @@ class InvoiceItem(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     quantity = Column(Numeric(15, 3), nullable=False)
     uom = Column(String(50), nullable=True)
-    cost_price = Column(Numeric(15, 2), nullable=False)
+    cost_price = Column(BigInteger, nullable=False)
     supply_markup_pct = Column(Numeric(6, 3), nullable=False)
-    supply_markup_amount = Column(Numeric(15, 2), nullable=False)
+    supply_markup_amount = Column(BigInteger, nullable=False)
     delivery_markup_pct = Column(Numeric(6, 3), default=0)
-    delivery_markup_amount = Column(Numeric(15, 2), default=0)
+    delivery_markup_amount = Column(BigInteger, default=0)
     payment_term_markup_pct = Column(Numeric(6, 3), default=0)
-    payment_term_markup_amount = Column(Numeric(15, 2), default=0)
-    unit_price = Column(Numeric(15, 2), nullable=False)
-    line_total = Column(Numeric(15, 2), nullable=False)
+    payment_term_markup_amount = Column(BigInteger, default=0)
+    unit_price = Column(BigInteger, nullable=False)
+    line_total = Column(BigInteger, nullable=False)
 
     invoice = relationship("Invoice", back_populates="items")
     product = relationship("Product", back_populates="invoice_items")
@@ -348,7 +351,7 @@ class Payment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=False)
-    amount = Column(Numeric(15, 2), nullable=False)
+    amount = Column(BigInteger, nullable=False)
     payment_method = Column(SAEnum(PaymentMethod), nullable=False)
     # ── Bank-transfer fields ──────────────────────────────────────────────────
     payment_account_id = Column(Integer, ForeignKey("payment_accounts.id"))

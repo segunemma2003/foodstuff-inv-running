@@ -203,7 +203,7 @@ class ProductOut(BaseModel):
     image_url: Optional[str] = None
     is_active: bool
     created_at: datetime
-    current_cost_price: Optional[float] = None
+    current_cost_price: Optional[int] = None  # kobo
     cost_price_effective_date: Optional[date] = None
 
 
@@ -231,13 +231,13 @@ class ProductVariantOut(BaseModel):
 
 class CostPriceCreate(BaseModel):
     product_id: int
-    cost_price: Decimal
+    cost_price: int                  # kobo
     effective_date: date
     notes: Optional[str] = None
 
 
 class CostPriceUpdate(BaseModel):
-    cost_price: Optional[Decimal] = None
+    cost_price: Optional[int] = None  # kobo
     effective_date: Optional[date] = None
     notes: Optional[str] = None
 
@@ -247,7 +247,7 @@ class CostPriceOut(BaseModel):
 
     id: int
     product_id: int
-    cost_price: Decimal
+    cost_price: int                  # kobo
     effective_date: date
     notes: Optional[str] = None
     created_by: Optional[int] = None
@@ -256,7 +256,7 @@ class CostPriceOut(BaseModel):
 
 class BulkCostPriceRow(BaseModel):
     sku: str
-    cost_price: Decimal
+    cost_price: int                  # kobo
     effective_date: date
     notes: Optional[str] = None
 
@@ -301,7 +301,8 @@ class QuotationItemCreate(BaseModel):
     product_id: int
     quantity: Decimal
     uom: Optional[str] = None
-    unit_price_override: Optional[Decimal] = None  # if set, skips markup calculation
+    unit_price_override: Optional[int] = None       # kobo; if set, skips markup calculation
+    discount_pct: Optional[Decimal] = None          # % discount applied after price calc
 
 
 class QuotationCreate(BaseModel):
@@ -310,6 +311,7 @@ class QuotationCreate(BaseModel):
     delivery_type: DeliveryType
     payment_term: str
     notes: Optional[str] = None
+    delivery_fee: Optional[int] = 0                 # kobo
     items: List[QuotationItemCreate]
 
 
@@ -335,15 +337,15 @@ class PricePreviewResponse(BaseModel):
     product_id: int
     product_name: str
     quantity: float
-    cost_price: float
+    cost_price: int                  # kobo
     supply_markup_pct: float
-    supply_markup_amount: float
+    supply_markup_amount: int        # kobo
     delivery_markup_pct: float
-    delivery_markup_amount: float
+    delivery_markup_amount: int      # kobo
     payment_term_markup_pct: float
-    payment_term_markup_amount: float
-    unit_price: float
-    line_total: float
+    payment_term_markup_amount: int  # kobo
+    unit_price: int                  # kobo
+    line_total: int                  # kobo
 
 
 class QuotationItemOut(BaseModel):
@@ -355,15 +357,16 @@ class QuotationItemOut(BaseModel):
     product_name: Optional[str] = None   # flat convenience from model property
     quantity: Decimal
     uom: Optional[str] = None
-    cost_price: Decimal
+    cost_price: int                  # kobo
     supply_markup_pct: Decimal
-    supply_markup_amount: Decimal
+    supply_markup_amount: int        # kobo
     delivery_markup_pct: Decimal
-    delivery_markup_amount: Decimal
+    delivery_markup_amount: int      # kobo
     payment_term_markup_pct: Decimal
-    payment_term_markup_amount: Decimal
-    unit_price: Decimal
-    line_total: Decimal
+    payment_term_markup_amount: int  # kobo
+    discount_pct: Decimal
+    unit_price: int                  # kobo
+    line_total: int                  # kobo
 
 
 class QuotationOut(BaseModel):
@@ -379,7 +382,8 @@ class QuotationOut(BaseModel):
     payment_term: str
     status: QuotationStatus
     notes: Optional[str] = None
-    total_amount: Decimal
+    delivery_fee: Optional[int] = 0          # kobo
+    total_amount: int                        # kobo
     created_by: int
     creator: Optional[UserOut] = None
     created_by_name: Optional[str] = None    # flat from model property
@@ -398,7 +402,7 @@ class InvoiceItemCreate(BaseModel):
     product_id: int
     quantity: Decimal
     uom: Optional[str] = None
-    unit_price: Decimal  # selling price (user-provided or from calculate-price)
+    unit_price: int      # kobo — selling price (user-provided or from calculate-price)
 
 
 class InvoiceCreate(BaseModel):
@@ -420,15 +424,15 @@ class InvoiceItemOut(BaseModel):
     product_name: Optional[str] = None      # flat from model property
     quantity: Decimal
     uom: Optional[str] = None
-    cost_price: Decimal
+    cost_price: int                  # kobo
     supply_markup_pct: Decimal
-    supply_markup_amount: Decimal
+    supply_markup_amount: int        # kobo
     delivery_markup_pct: Decimal
-    delivery_markup_amount: Decimal
+    delivery_markup_amount: int      # kobo
     payment_term_markup_pct: Decimal
-    payment_term_markup_amount: Decimal
-    unit_price: Decimal
-    line_total: Decimal
+    payment_term_markup_amount: int  # kobo
+    unit_price: int                  # kobo
+    line_total: int                  # kobo
 
 
 class InvoiceOut(BaseModel):
@@ -446,8 +450,9 @@ class InvoiceOut(BaseModel):
     delivery_type: DeliveryType
     status: InvoiceStatus
     notes: Optional[str] = None
-    total_amount: Decimal
-    amount_paid: Decimal = Decimal("0")
+    delivery_fee: Optional[int] = 0          # kobo
+    total_amount: int                        # kobo
+    amount_paid: int = 0                     # kobo
     custom_pdf_s3_key: Optional[str] = None
     created_by: int
     creator: Optional[UserOut] = None

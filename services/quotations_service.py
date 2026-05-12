@@ -57,11 +57,11 @@ def _calc_and_build_items(
         pricing = calculate_item_price(cost, delivery_type, payment_term, rules)
         qty = Decimal(str(it.quantity))
 
-        if it.unit_price_override is not None:
-            unit_price = Decimal(str(it.unit_price_override))
-        else:
-            unit_price = Decimal(str(pricing["unit_price"]))
-        line_total = (qty * unit_price).quantize(Decimal("0.01"))
+        base_price = it.unit_price_override if it.unit_price_override is not None else pricing["unit_price"]
+        discount_pct = Decimal(str(it.discount_pct or 0))
+        # discount = unit_price * discount_pct% (applied per unit, then multiplied by qty)
+        unit_price = round(base_price * (1 - float(discount_pct) / 100))  # kobo
+        line_total = round(float(qty) * unit_price)                         # kobo
         total += line_total
 
         uom = it.uom
@@ -79,13 +79,14 @@ def _calc_and_build_items(
                 product_id=it.product_id,
                 quantity=qty,
                 uom=uom,
-                cost_price=cost,
+                cost_price=int(cost),
                 supply_markup_pct=Decimal(str(pricing["supply_markup_pct"])),
-                supply_markup_amount=Decimal(str(pricing["supply_markup_amount"])),
+                supply_markup_amount=pricing["supply_markup_amount"],
                 delivery_markup_pct=Decimal(str(pricing["delivery_markup_pct"])),
-                delivery_markup_amount=Decimal(str(pricing["delivery_markup_amount"])),
+                delivery_markup_amount=pricing["delivery_markup_amount"],
                 payment_term_markup_pct=Decimal(str(pricing["payment_term_markup_pct"])),
-                payment_term_markup_amount=Decimal(str(pricing["payment_term_markup_amount"])),
+                payment_term_markup_amount=pricing["payment_term_markup_amount"],
+                discount_pct=discount_pct,
                 unit_price=unit_price,
                 line_total=line_total,
             )
@@ -146,6 +147,7 @@ def _build_invoice_from_quotation(
         payment_term=quotation.payment_term,
         due_date=due,
         delivery_type=quotation.delivery_type,
+        delivery_fee=quotation.delivery_fee or Decimal("0"),
         total_amount=quotation.total_amount,
         notes=quotation.notes,
         created_by=actor_user.id,
@@ -249,7 +251,9 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
     if not body.items:
         raise HTTPException(400, "Quotation must have at least one item")
 
-    items, total = _calc_and_build_items(body.items, body.delivery_type, body.payment_term, db)
+    items, subtotal = _calc_and_build_items(body.items, body.delivery_type, body.payment_term, db)
+    delivery_fee = Decimal(str(body.delivery_fee or 0))
+    total = subtotal + delivery_fee
     quotation = models.Quotation(
         quotation_number=next_quotation_number(db),
         customer_id=body.customer_id,
@@ -257,6 +261,7 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
         delivery_type=body.delivery_type,
         payment_term=body.payment_term,
         notes=body.notes,
+        delivery_fee=delivery_fee,
         total_amount=total,
         created_by=current_user.id,
         status=models.QuotationStatus.draft,

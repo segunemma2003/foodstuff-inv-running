@@ -16,11 +16,9 @@ from sqlalchemy.orm import Session
 import models
 
 
-PENNY = Decimal("0.01")
-
-
-def _round(value: Decimal) -> Decimal:
-    return value.quantize(PENNY, rounding=ROUND_HALF_UP)
+def _round(value: Decimal) -> int:
+    """Round to nearest kobo (integer)."""
+    return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def get_active_rules(db: Session) -> dict:
@@ -103,14 +101,14 @@ def calculate_item_price(
         pt_pct = Decimal(str(pt_rule.markup_percentage)) / 100
         pt_amount = _round(cost_price * pt_pct)
 
-    unit_price = cost_price + supply_amount + delivery_amount + pt_amount
+    unit_price = int(cost_price) + supply_amount + delivery_amount + pt_amount
 
     return {
         "supply_markup_pct": float(supply_pct * 100),
-        "supply_markup_amount": float(supply_amount),
+        "supply_markup_amount": supply_amount,        # kobo (int)
         "delivery_markup_pct": float(delivery_pct * 100),
-        "delivery_markup_amount": float(delivery_amount),
+        "delivery_markup_amount": delivery_amount,    # kobo (int)
         "payment_term_markup_pct": float(pt_pct * 100),
-        "payment_term_markup_amount": float(pt_amount),
-        "unit_price": float(unit_price),
+        "payment_term_markup_amount": pt_amount,      # kobo (int)
+        "unit_price": unit_price,                     # kobo (int)
     }

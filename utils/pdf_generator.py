@@ -86,14 +86,15 @@ def _ensure_unicode_font():
 
 
 def _fc(amount) -> str:
-    """Currency format with Naira symbol for totals."""
+    """Currency format with Naira symbol — amount is in kobo."""
+    naira = float(amount) / 100
     prefix = "₦" if _FONT != "Helvetica" else "NGN "
-    return f"{prefix}{amount:,.2f}"
+    return f"{prefix}{naira:,.2f}"
 
 
 def _fmt(amount) -> str:
-    """Plain number format for line-item cells."""
-    return f"{float(amount):,.2f}"
+    """Plain number format for line-item cells — amount is in kobo."""
+    return f"{float(amount) / 100:,.2f}"
 
 
 def _fmt_qty(qty) -> str:
@@ -259,7 +260,7 @@ def _items_table(items: list, styles) -> Table:
     return t
 
 
-def _totals_section(total_amount: Decimal, amount_paid: Decimal, styles) -> list:
+def _totals_section(total_amount: Decimal, amount_paid: Decimal, styles, delivery_fee: Decimal = Decimal("0")) -> list:
     balance = max(Decimal("0"), total_amount - amount_paid)
     out = []
 
@@ -267,18 +268,38 @@ def _totals_section(total_amount: Decimal, amount_paid: Decimal, styles) -> list
     _LW = 14.5 * cm   # label column width
     _VW = 3.5  * cm   # value column width — matches AMOUNT column in items table
 
-    box_t = Table(
-        [["", Paragraph(_fc(total_amount), styles["BoldRight"])]],
-        colWidths=[_LW, _VW],
-    )
+    subtotal = total_amount - delivery_fee if delivery_fee > 0 else total_amount
+
+    box_rows = []
+    if delivery_fee > 0:
+        box_rows.append(["", Paragraph(_fc(subtotal), styles["Right"])])
+    box_rows.append(["", Paragraph(_fc(total_amount), styles["BoldRight"])])
+    box_t = Table(box_rows, colWidths=[_LW, _VW])
     box_t.setStyle(TableStyle([
-        ("BOX",           (1, 0), (1, 0), 0.5, BORDER_GRAY),
+        ("BOX",           (1, 0), (1, -1), 0.5, BORDER_GRAY),
         ("TOPPADDING",    (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("LEFTPADDING",   (1, 0), (1, 0),   4),
-        ("RIGHTPADDING",  (1, 0), (1, 0),   4),
+        ("LEFTPADDING",   (1, 0), (1, -1),  4),
+        ("RIGHTPADDING",  (1, 0), (1, -1),  4),
     ]))
     out.append(box_t)
+
+    # Delivery fee line (shown before total when present)
+    if delivery_fee > 0:
+        fee_t = Table(
+            [[Paragraph("Subtotal:", styles["Right"]),
+              Paragraph(_fc(subtotal), styles["Right"])],
+             [Paragraph("Delivery Fee:", styles["Right"]),
+              Paragraph(_fc(delivery_fee), styles["Right"])]],
+            colWidths=[_LW, _VW],
+        )
+        fee_t.setStyle(TableStyle([
+            ("LINEABOVE",     (0, 0), (-1, 0), 0.5, BORDER_GRAY),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING",  (1, 0), (1, -1),  0),
+        ]))
+        out.append(fee_t)
 
     # Total (VAT incl.) line
     vat_t = Table(
@@ -375,7 +396,7 @@ def generate_quotation_pdf(quotation: models.Quotation) -> bytes:
     story.append(Spacer(1, 0.4 * cm))
     story.append(_items_table(quotation.items, styles))
     story.append(Spacer(1, 0.2 * cm))
-    story += _totals_section(quotation.total_amount, Decimal("0"), styles)
+    story += _totals_section(quotation.total_amount, Decimal("0"), styles, Decimal(str(quotation.delivery_fee or 0)))
 
     if quotation.notes:
         story.append(Spacer(1, 0.4 * cm))
@@ -418,7 +439,7 @@ def generate_invoice_pdf(
     story.append(Spacer(1, 0.4 * cm))
     story.append(_items_table(invoice.items, styles))
     story.append(Spacer(1, 0.2 * cm))
-    story += _totals_section(invoice.total_amount, invoice.amount_paid or Decimal("0"), styles)
+    story += _totals_section(invoice.total_amount, invoice.amount_paid or Decimal("0"), styles, Decimal(str(invoice.delivery_fee or 0)))
     story += _payment_section(
         invoice.payment_term, invoice.invoice_number, bank_accounts or [], styles
     )

@@ -114,7 +114,16 @@ def run_migrations():
             conn.execute(text(
                 "ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"
             ))
-        conn.commit()
+            conn.execute(text(
+                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(15,2) DEFAULT 0"
+            ))
+            conn.execute(text(
+                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(15,2) DEFAULT 0"
+            ))
+            conn.execute(text(
+                "ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS discount_pct NUMERIC(6,3) NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
 
 
 @asynccontextmanager
