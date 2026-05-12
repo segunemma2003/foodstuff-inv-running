@@ -62,7 +62,7 @@ def _calc_and_build_items(
         # discount = unit_price * discount_pct% (applied per unit, then multiplied by qty)
         unit_price = int(round(base_price * (1 - float(discount_pct) / 100)))  # kobo
         line_total = int(round(float(qty) * unit_price))                       # kobo
-         total += line_total
+        total += line_total
 
         uom = it.uom
         if not uom:
