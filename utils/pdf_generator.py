@@ -354,6 +354,50 @@ def _payment_section(payment_term: str, doc_number: str, bank_accounts: list, st
     return out
 
 
+def _signature_section(customer_name: str, styles) -> list:
+    """Three side-by-side signature boxes: Foodstuff Store, Account Officer, Customer."""
+    box_style = TableStyle([
+        ("BOX",           (0, 0), (-1, -1), 0.5, BORDER_GRAY),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+    ])
+    sig_line = Paragraph("___________________________", styles["Normal"])
+
+    def _box(title: str, role: str) -> Table:
+        t = Table(
+            [
+                [Paragraph(f"<b>{title}</b>", styles["Bold"])],
+                [Spacer(1, 0.6 * cm)],
+                [sig_line],
+                [Paragraph(role, styles["Muted"])],
+            ],
+            colWidths=[5.5 * cm],
+        )
+        t.setStyle(box_style)
+        return t
+
+    row = Table(
+        [[
+            _box("Foodstuff Store", "Authorised Signature"),
+            _box("Account Officer", "Name & Signature"),
+            _box(f"For: {customer_name[:30]}", "Company Representative"),
+        ]],
+        colWidths=[6 * cm, 6 * cm, 6 * cm],
+        hAlign="LEFT",
+    )
+    row.setStyle(TableStyle([
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+        ("TOPPADDING",    (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+    ]))
+    return [Spacer(1, 0.5 * cm), row]
+
+
 def _footer_line(styles) -> Table:
     t = Table(
         [[Paragraph("Thank you for your business \u2014 Foodstuff Store", styles["White"])]],
@@ -370,7 +414,7 @@ def _footer_line(styles) -> Table:
 
 # ── Public generators ──────────────────────────────────────────────────────────
 
-def generate_quotation_pdf(quotation: models.Quotation) -> bytes:
+def generate_quotation_pdf(quotation: models.Quotation, bank_accounts: list = None) -> bytes:
     _ensure_unicode_font()
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4,
@@ -398,11 +442,20 @@ def generate_quotation_pdf(quotation: models.Quotation) -> bytes:
     story.append(Spacer(1, 0.2 * cm))
     story += _totals_section(quotation.total_amount, Decimal("0"), styles, Decimal(str(quotation.delivery_fee or 0)))
 
+    story += _payment_section(
+        quotation.payment_term, quotation.quotation_number, bank_accounts or [], styles
+    )
+
     if quotation.notes:
         story.append(Spacer(1, 0.4 * cm))
         story.append(Paragraph(f"<b>Notes:</b> {quotation.notes}", styles["Normal"]))
 
-    story.append(Spacer(1, 0.6 * cm))
+    customer_name = (
+        quotation.customer.business_name or quotation.customer.customer_name
+        if quotation.customer else "Customer"
+    )
+    story += _signature_section(customer_name, styles)
+    story.append(Spacer(1, 0.4 * cm))
     story.append(_footer_line(styles))
 
     doc.build(story)
@@ -455,7 +508,12 @@ def generate_invoice_pdf(
         story.append(Spacer(1, 0.4 * cm))
         story.append(Paragraph(f"<b>Notes:</b> {invoice.notes}", styles["Normal"]))
 
-    story.append(Spacer(1, 0.6 * cm))
+    customer_name = (
+        invoice.customer.business_name or invoice.customer.customer_name
+        if invoice.customer else "Customer"
+    )
+    story += _signature_section(customer_name, styles)
+    story.append(Spacer(1, 0.4 * cm))
     story.append(_footer_line(styles))
 
     doc.build(story)

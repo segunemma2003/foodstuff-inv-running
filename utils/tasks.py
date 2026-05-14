@@ -87,7 +87,13 @@ def generate_quotation_pdf_task(self, quotation_id: int):
         if q is None:
             raise ValueError(f"Quotation {quotation_id} not found")
 
-        pdf_bytes = generate_quotation_pdf(q)
+        bank_accounts = (
+            db.query(models.PaymentAccount)
+            .filter(models.PaymentAccount.is_active == True)
+            .order_by(models.PaymentAccount.is_default.desc())
+            .all()
+        )
+        pdf_bytes = generate_quotation_pdf(q, bank_accounts=bank_accounts)
         s3_key = f"jobs/{self.request.id}.pdf"
         upload_bytes(s3_key, pdf_bytes, "application/pdf")
         return {
@@ -112,7 +118,13 @@ def generate_invoice_pdf_task(self, invoice_id: int):
         if inv is None:
             raise ValueError(f"Invoice {invoice_id} not found")
 
-        pdf_bytes = generate_invoice_pdf(inv)
+        bank_accounts = (
+            db.query(models.PaymentAccount)
+            .filter(models.PaymentAccount.is_active == True)
+            .order_by(models.PaymentAccount.is_default.desc())
+            .all()
+        )
+        pdf_bytes = generate_invoice_pdf(inv, bank_accounts=bank_accounts)
         s3_key = f"jobs/{self.request.id}.pdf"
         upload_bytes(s3_key, pdf_bytes, "application/pdf")
         return {
@@ -176,7 +188,13 @@ def send_quotation_to_customer_task(self, quotation_id: int):
         if not customer_email:
             raise ValueError(f"Customer has no email address")
 
-        pdf_bytes = generate_quotation_pdf(q)
+        bank_accounts = (
+            db.query(models.PaymentAccount)
+            .filter(models.PaymentAccount.is_active == True)
+            .order_by(models.PaymentAccount.is_default.desc())
+            .all()
+        )
+        pdf_bytes = generate_quotation_pdf(q, bank_accounts=bank_accounts)
         subject, html, text = tpl_quotation_to_customer(
             q.quotation_number,
             q.customer.customer_name,

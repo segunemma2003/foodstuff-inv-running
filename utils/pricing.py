@@ -8,6 +8,7 @@ Default markups (seeded in DB, editable via /pricing-rules):
   Delivery : 3 %  (only when delivery_type == "delivery")
   Net 30   : 3.5% (only when payment_term == "net_30")
 """
+import math
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
 from typing import Optional
@@ -102,7 +103,7 @@ def calculate_item_price(
         pt_pct = Decimal(str(pt_rule.markup_percentage)) / 100
         pt_amount = _round(cost_price * pt_pct)
 
-    unit_price = int(cost_price) + supply_amount + delivery_amount + pt_amount
+    unit_price = math.ceil((int(cost_price) + supply_amount + delivery_amount + pt_amount) / 100) * 100
 
     return {
         "supply_markup_pct": float(supply_pct * 100),

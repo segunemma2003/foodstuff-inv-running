@@ -1,5 +1,6 @@
 """Quotation domain business logic and orchestration."""
 
+import math
 from typing import List, Optional
 from datetime import date, datetime
 from decimal import Decimal
@@ -59,9 +60,8 @@ def _calc_and_build_items(
 
         base_price = it.unit_price_override if it.unit_price_override is not None else pricing["unit_price"]
         discount_pct = Decimal(str(it.discount_pct or 0))
-        # discount = unit_price * discount_pct% (applied per unit, then multiplied by qty)
-        unit_price = int(round(base_price * (1 - float(discount_pct) / 100)))  # kobo
-        line_total = int(round(float(qty) * unit_price))                       # kobo
+        unit_price = math.ceil(float(base_price) * (1 - float(discount_pct) / 100) / 100) * 100
+        line_total = math.ceil(float(qty) * unit_price / 100) * 100
         total += line_total
 
         uom = it.uom
@@ -490,7 +490,13 @@ def download_quotation_pdf(db: Session, quotation_id: int) -> StreamingResponse:
     if not quotation:
         raise HTTPException(404, "Quotation not found")
 
-    pdf_bytes = gen_pdf(quotation)
+    bank_accounts = (
+        db.query(models.PaymentAccount)
+        .filter(models.PaymentAccount.is_active == True)
+        .order_by(models.PaymentAccount.is_default.desc())
+        .all()
+    )
+    pdf_bytes = gen_pdf(quotation, bank_accounts=bank_accounts)
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
