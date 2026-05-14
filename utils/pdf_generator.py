@@ -178,7 +178,6 @@ def _header_band(branch: str, styles) -> Table:
 
     addr = (
         f"<b>Head Office</b>: {_COMPANY_ADDR_HQ}<br/>"
-        f"<b>Lagos</b>: {_COMPANY_ADDR_LG}<br/>"
         f"<b>Web</b>: {_COMPANY_WEB}<br/>"
         f"<b>Phone</b>: {_COMPANY_PHONE}"
     )
@@ -262,77 +261,39 @@ def _items_table(items: list, styles) -> Table:
 
 def _totals_section(total_amount: Decimal, amount_paid: Decimal, styles, delivery_fee: Decimal = Decimal("0")) -> list:
     balance = max(Decimal("0"), total_amount - amount_paid)
-    out = []
 
-    # Totals aligned to AMOUNT column (starts at 14.5 cm = 7.5+1.5+2+3.5)
-    _LW = 14.5 * cm   # label column width
-    _VW = 3.5  * cm   # value column width — matches AMOUNT column in items table
+    _LW = 14.5 * cm   # label column width (aligns with AMOUNT column in items table)
+    _VW = 3.5  * cm   # value column width
 
-    subtotal = total_amount - delivery_fee if delivery_fee > 0 else total_amount
-
-    box_rows = []
+    rows = []
     if delivery_fee > 0:
-        box_rows.append(["", Paragraph(_fc(subtotal), styles["Right"])])
-    box_rows.append(["", Paragraph(_fc(total_amount), styles["BoldRight"])])
-    box_t = Table(box_rows, colWidths=[_LW, _VW])
-    box_t.setStyle(TableStyle([
-        ("BOX",           (1, 0), (1, -1), 0.5, BORDER_GRAY),
+        subtotal = total_amount - delivery_fee
+        rows.append([Paragraph("Subtotal:", styles["Right"]),
+                     Paragraph(_fc(subtotal), styles["Right"])])
+        rows.append([Paragraph("Delivery Fee:", styles["Right"]),
+                     Paragraph(_fc(delivery_fee), styles["Right"])])
+
+    total_row_idx = len(rows)
+    rows.append([Paragraph("<b>Total (VAT incl.):</b>", styles["BoldRight"]),
+                 Paragraph(f"<b>{_fc(total_amount)}</b>", styles["BoldRight"])])
+
+    if amount_paid > 0:
+        rows.append([Paragraph("Amount Paid:", styles["Right"]),
+                     Paragraph(_fc(amount_paid), styles["Right"])])
+        rows.append([Paragraph("<b>Balance Due:</b>", styles["BoldRight"]),
+                     Paragraph(f"<b>{_fc(balance)}</b>", styles["BoldRight"])])
+
+    t = Table(rows, colWidths=[_LW, _VW])
+    t.setStyle(TableStyle([
         ("TOPPADDING",    (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("LEFTPADDING",   (1, 0), (1, -1),  4),
         ("RIGHTPADDING",  (1, 0), (1, -1),  4),
+        ("BOX",           (1, 0), (1, -1),  0.5, BORDER_GRAY),
+        ("LINEABOVE",     (0, 0), (-1, 0),  0.5, BORDER_GRAY),
+        ("LINEABOVE",     (0, total_row_idx), (-1, total_row_idx), 0.8, DARK_TEXT),
     ]))
-    out.append(box_t)
-
-    # Delivery fee line (shown before total when present)
-    if delivery_fee > 0:
-        fee_t = Table(
-            [[Paragraph("Subtotal:", styles["Right"]),
-              Paragraph(_fc(subtotal), styles["Right"])],
-             [Paragraph("Delivery Fee:", styles["Right"]),
-              Paragraph(_fc(delivery_fee), styles["Right"])]],
-            colWidths=[_LW, _VW],
-        )
-        fee_t.setStyle(TableStyle([
-            ("LINEABOVE",     (0, 0), (-1, 0), 0.5, BORDER_GRAY),
-            ("TOPPADDING",    (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING",  (1, 0), (1, -1),  0),
-        ]))
-        out.append(fee_t)
-
-    # Total (VAT incl.) line
-    vat_t = Table(
-        [[Paragraph("Total (VAT incl.):", styles["Right"]),
-          Paragraph(f"<b>{_fc(total_amount)}</b>", styles["BoldRight"])]],
-        colWidths=[_LW, _VW],
-    )
-    vat_t.setStyle(TableStyle([
-        ("LINEABOVE",     (0, 0), (-1, 0), 0.5, DARK_TEXT),
-        ("TOPPADDING",    (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING",  (1, 0), (1, 0),   0),
-    ]))
-    out.append(vat_t)
-
-    if amount_paid > 0:
-        extra_t = Table(
-            [
-                [Paragraph("Amount Paid:", styles["Right"]),
-                 Paragraph(_fc(amount_paid), styles["Right"])],
-                [Paragraph("<b>Balance Due:</b>", styles["BoldRight"]),
-                 Paragraph(f"<b>{_fc(balance)}</b>", styles["BoldRight"])],
-            ],
-            colWidths=[_LW, _VW],
-        )
-        extra_t.setStyle(TableStyle([
-            ("TOPPADDING",    (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ("RIGHTPADDING",  (1, 0), (1, -1),  0),
-        ]))
-        out.append(extra_t)
-
-    return out
+    return [t]
 
 
 def _payment_section(payment_term: str, doc_number: str, bank_accounts: list, styles) -> list:
@@ -355,7 +316,7 @@ def _payment_section(payment_term: str, doc_number: str, bank_accounts: list, st
 
 
 def _signature_section(customer_name: str, styles) -> list:
-    """Three side-by-side signature boxes: Foodstuff Store, Account Officer, Customer."""
+    """Two side-by-side signature boxes: Foodstuff Store and Customer."""
     box_style = TableStyle([
         ("BOX",           (0, 0), (-1, -1), 0.5, BORDER_GRAY),
         ("TOPPADDING",    (0, 0), (-1, -1), 6),
@@ -374,7 +335,7 @@ def _signature_section(customer_name: str, styles) -> list:
                 [sig_line],
                 [Paragraph(role, styles["Muted"])],
             ],
-            colWidths=[5.5 * cm],
+            colWidths=[8 * cm],
         )
         t.setStyle(box_style)
         return t
@@ -382,10 +343,9 @@ def _signature_section(customer_name: str, styles) -> list:
     row = Table(
         [[
             _box("Foodstuff Store", "Authorised Signature"),
-            _box("Account Officer", "Name & Signature"),
             _box(f"For: {customer_name[:30]}", "Company Representative"),
         ]],
-        colWidths=[6 * cm, 6 * cm, 6 * cm],
+        colWidths=[9 * cm, 9 * cm],
         hAlign="LEFT",
     )
     row.setStyle(TableStyle([
