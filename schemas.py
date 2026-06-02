@@ -75,6 +75,10 @@ class UserPasswordUpdate(BaseModel):
     new_password: str
 
 
+class AdminUserPasswordChange(BaseModel):
+    new_password: str
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

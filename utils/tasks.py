@@ -21,7 +21,14 @@ from sqlalchemy import func
 from utils.email import send_email
 import base64
 
-INVOICE_PRIMARY_RECIPIENT = "foodstuffstoreinvoices@gmail.com"
+INVOICE_PRIMARY_RECIPIENT = os.getenv(
+    "INVOICE_PRIMARY_RECIPIENT",
+    os.getenv("INVOICE_PRIMARY_RECIPIENT_EMAIL", "foodstuffstoreinvoices@gmail.com"),
+)
+QUOTATION_PRIMARY_RECIPIENT = os.getenv(
+    "QUOTATION_PRIMARY_RECIPIENT",
+    os.getenv("QUOTATION_PRIMARY_RECIPIENT_EMAIL", "foodstuffstorequotations@gmail.com"),
+)
 
 
 # ─── Email ────────────────────────────────────────────────────────────────────
@@ -200,7 +207,7 @@ def send_quotation_to_customer_task(self, quotation_id: int):
             q.customer.customer_name,
             float(q.total_amount),
         )
-        recipients = list(dict.fromkeys([customer_email, INVOICE_PRIMARY_RECIPIENT]))
+        recipients = list(dict.fromkeys([customer_email, QUOTATION_PRIMARY_RECIPIENT]))
         for recipient in recipients:
             send_email(
                 to=recipient,

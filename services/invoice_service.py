@@ -4,6 +4,7 @@ from datetime import date
 from io import BytesIO
 from typing import List, Optional
 import uuid
+import os
 
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -29,7 +30,10 @@ from utils.tasks import (
 )
 
 
-INVOICE_PRIMARY_RECIPIENT = "foodstuffstoreinvoices@gmail.com"
+INVOICE_PRIMARY_RECIPIENT = os.getenv(
+    "INVOICE_PRIMARY_RECIPIENT",
+    os.getenv("INVOICE_PRIMARY_RECIPIENT_EMAIL", "foodstuffstoreinvoices@gmail.com"),
+)
 
 
 def list_convertible_quotations(db: Session, customer_id: Optional[int] = None):

@@ -11,7 +11,7 @@ import models
 import schemas
 from repositories import user_repository as user_repo
 from utils import audit
-from utils.email import tpl_password_reset
+from utils.email import tpl_password_reset, tpl_password_changed
 from services.integrations.tasks import send_email_task
 
 
@@ -92,4 +92,11 @@ def change_password(db: Session, current_user: models.User, req: schemas.UserPas
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     current_user.hashed_password = hash_password(req.new_password)
     db.commit()
+    if current_user.email:
+        subject, html, text = tpl_password_changed(
+            current_user.full_name,
+            req.new_password,
+            "you",
+        )
+        send_email_task.delay(current_user.email, subject, html, text)
     return schemas.MessageResponse(message="Password updated successfully")

@@ -10,6 +10,8 @@ import models
 import schemas
 from repositories import user_repository as user_repo
 from utils import audit
+from utils.email import tpl_password_changed
+from services.integrations.tasks import send_email_task
 
 
 def list_users(
@@ -95,3 +97,43 @@ def deactivate_user(db: Session, user_id: int, current_user: models.User) -> sch
     )
     db.commit()
     return schemas.MessageResponse(message="User deactivated")
+
+
+def change_user_password(
+    db: Session,
+    user_id: int,
+    body: schemas.AdminUserPasswordChange,
+    current_user: models.User,
+) -> schemas.MessageResponse:
+    user = user_repo.get_by_id(db, user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    user.hashed_password = hash_password(body.new_password)
+    audit.log(
+        db,
+        models.AuditAction.update,
+        models.AuditEntity.user,
+        user.id,
+        current_user.id,
+        description=f"Reset password for user {user.username}",
+    )
+    db.commit()
+    if user.email:
+        subject, html, text = tpl_password_changed(
+            user.full_name,
+            body.new_password,
+            current_user.full_name or current_user.username,
+        )
+        send_email_task.delay(user.email, subject, html, text)
+    return schemas.MessageResponse(message="User password changed successfully")
+
+
+def reset_user_password(
+    db: Session,
+    user_id: int,
+    body: schemas.AdminUserPasswordChange,
+    current_user: models.User,
+) -> schemas.MessageResponse:
+    """Backward-compatible alias for older clients."""
+    return change_user_password(db, user_id, body, current_user)

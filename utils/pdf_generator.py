@@ -97,6 +97,18 @@ def _fmt(amount) -> str:
     return f"{float(amount) / 100:,.2f}"
 
 
+def _fc_whole_plain(amount) -> str:
+    """Whole naira format with no commas/decimals — amount is in kobo."""
+    naira = int(round(float(amount) / 100))
+    prefix = "₦" if _FONT != "Helvetica" else "NGN "
+    return f"{prefix}{naira}"
+
+
+def _fmt_whole_plain(amount) -> str:
+    """Whole naira numeric format with no commas/decimals — amount is in kobo."""
+    return str(int(round(float(amount) / 100)))
+
+
 def _fmt_qty(qty) -> str:
     """Format quantity — strip trailing zeros."""
     v = float(qty)
@@ -224,7 +236,7 @@ def _date_row(c1_lbl: str, c1_val: str,
     return t
 
 
-def _items_table(items: list, styles) -> Table:
+def _items_table(items: list, styles, plain_whole_naira: bool = False) -> Table:
     header = [
         Paragraph("PRODUCT NAME", styles["TableHdr"]),
         Paragraph("QTY",         styles["TableHdrR"]),
@@ -236,12 +248,14 @@ def _items_table(items: list, styles) -> Table:
     for item in items:
         name = item.product.product_name if item.product else str(item.product_id)
         uom  = getattr(item, "uom", None) or "—"
+        unit_price = _fmt_whole_plain(item.unit_price) if plain_whole_naira else _fmt(item.unit_price)
+        line_total = _fmt_whole_plain(item.line_total) if plain_whole_naira else _fmt(item.line_total)
         rows.append([
             Paragraph(name,                    styles["Normal"]),
             Paragraph(_fmt_qty(item.quantity), styles["Right"]),
             Paragraph(uom,                     styles["Normal"]),
-            Paragraph(_fmt(item.unit_price),   styles["Right"]),
-            Paragraph(_fmt(item.line_total),   styles["Right"]),
+            Paragraph(unit_price,              styles["Right"]),
+            Paragraph(line_total,              styles["Right"]),
         ])
 
     col_widths = [7.5 * cm, 1.5 * cm, 2 * cm, 3.5 * cm, 3.5 * cm]
@@ -259,8 +273,15 @@ def _items_table(items: list, styles) -> Table:
     return t
 
 
-def _totals_section(total_amount: Decimal, amount_paid: Decimal, styles, delivery_fee: Decimal = Decimal("0")) -> list:
+def _totals_section(
+    total_amount: Decimal,
+    amount_paid: Decimal,
+    styles,
+    delivery_fee: Decimal = Decimal("0"),
+    plain_whole_naira: bool = False,
+) -> list:
     balance = max(Decimal("0"), total_amount - amount_paid)
+    format_currency = _fc_whole_plain if plain_whole_naira else _fc
 
     _LW = 14.5 * cm   # label column width (aligns with AMOUNT column in items table)
     _VW = 3.5  * cm   # value column width
@@ -269,19 +290,19 @@ def _totals_section(total_amount: Decimal, amount_paid: Decimal, styles, deliver
     if delivery_fee > 0:
         subtotal = total_amount - delivery_fee
         rows.append([Paragraph("Subtotal:", styles["Right"]),
-                     Paragraph(_fc(subtotal), styles["Right"])])
+                     Paragraph(format_currency(subtotal), styles["Right"])])
         rows.append([Paragraph("Delivery Fee:", styles["Right"]),
-                     Paragraph(_fc(delivery_fee), styles["Right"])])
+                     Paragraph(format_currency(delivery_fee), styles["Right"])])
 
     total_row_idx = len(rows)
     rows.append([Paragraph("<b>Total (VAT incl.):</b>", styles["BoldRight"]),
-                 Paragraph(f"<b>{_fc(total_amount)}</b>", styles["BoldRight"])])
+                 Paragraph(f"<b>{format_currency(total_amount)}</b>", styles["BoldRight"])])
 
     if amount_paid > 0:
         rows.append([Paragraph("Amount Paid:", styles["Right"]),
-                     Paragraph(_fc(amount_paid), styles["Right"])])
+                     Paragraph(format_currency(amount_paid), styles["Right"])])
         rows.append([Paragraph("<b>Balance Due:</b>", styles["BoldRight"]),
-                     Paragraph(f"<b>{_fc(balance)}</b>", styles["BoldRight"])])
+                     Paragraph(f"<b>{format_currency(balance)}</b>", styles["BoldRight"])])
 
     t = Table(rows, colWidths=[_LW, _VW])
     t.setStyle(TableStyle([
@@ -450,9 +471,15 @@ def generate_invoice_pdf(
         styles,
     ))
     story.append(Spacer(1, 0.4 * cm))
-    story.append(_items_table(invoice.items, styles))
+    story.append(_items_table(invoice.items, styles, plain_whole_naira=True))
     story.append(Spacer(1, 0.2 * cm))
-    story += _totals_section(invoice.total_amount, invoice.amount_paid or Decimal("0"), styles, Decimal(str(invoice.delivery_fee or 0)))
+    story += _totals_section(
+        invoice.total_amount,
+        invoice.amount_paid or Decimal("0"),
+        styles,
+        Decimal(str(invoice.delivery_fee or 0)),
+        plain_whole_naira=True,
+    )
     story += _payment_section(
         invoice.payment_term, invoice.invoice_number, bank_accounts or [], styles
     )

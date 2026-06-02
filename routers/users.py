@@ -59,3 +59,23 @@ def deactivate_user(
     current_user: models.User = Depends(require_admin),
 ):
     return user_service.deactivate_user(db, user_id, current_user)
+
+
+@router.post("/{user_id}/reset-password", response_model=schemas.MessageResponse)
+def reset_user_password(
+    user_id: int,
+    body: schemas.AdminUserPasswordChange,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    return user_service.reset_user_password(db, user_id, body, current_user)
+
+
+@router.post("/{user_id}/change-password", response_model=schemas.MessageResponse)
+def change_user_password(
+    user_id: int,
+    body: schemas.AdminUserPasswordChange,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    return user_service.change_user_password(db, user_id, body, current_user)

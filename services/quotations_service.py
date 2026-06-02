@@ -1,6 +1,7 @@
 """Quotation domain business logic and orchestration."""
 
 import math
+import os
 from typing import List, Optional
 from datetime import date, datetime
 from decimal import Decimal
@@ -28,7 +29,10 @@ from utils.email import (
     tpl_quotation_rejected,
 )
 
-INVOICE_PRIMARY_RECIPIENT = "foodstuffstoreinvoices@gmail.com"
+QUOTATION_PRIMARY_RECIPIENT = os.getenv(
+    "QUOTATION_PRIMARY_RECIPIENT",
+    os.getenv("QUOTATION_PRIMARY_RECIPIENT_EMAIL", "foodstuffstorequotations@gmail.com"),
+)
 
 
 def _calc_and_build_items(
@@ -544,7 +548,7 @@ def upload_quotation_to_make(
         raise HTTPException(400, "Submit the quotation before sending it")
 
     pdf_bytes = gen_pdf(quotation)
-    recipients: List[str] = [INVOICE_PRIMARY_RECIPIENT]
+    recipients: List[str] = [QUOTATION_PRIMARY_RECIPIENT]
     if additional_emails:
         recipients.extend([e.strip() for e in additional_emails if e and e.strip()])
     recipients = list(dict.fromkeys(recipients))
