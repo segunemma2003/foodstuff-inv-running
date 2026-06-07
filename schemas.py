@@ -73,10 +73,12 @@ class UserUpdate(BaseModel):
 class UserPasswordUpdate(BaseModel):
     current_password: str
     new_password: str
+    send_email: bool = True
 
 
 class AdminUserPasswordChange(BaseModel):
     new_password: str
+    send_email: bool = True
 
 
 class UserOut(BaseModel):

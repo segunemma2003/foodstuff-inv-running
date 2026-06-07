@@ -119,7 +119,7 @@ def change_user_password(
         description=f"Reset password for user {user.username}",
     )
     db.commit()
-    if user.email:
+    if body.send_email and user.email:
         subject, html, text = tpl_password_changed(
             user.full_name,
             body.new_password,

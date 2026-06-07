@@ -92,7 +92,7 @@ def change_password(db: Session, current_user: models.User, req: schemas.UserPas
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     current_user.hashed_password = hash_password(req.new_password)
     db.commit()
-    if current_user.email:
+    if req.send_email and current_user.email:
         subject, html, text = tpl_password_changed(
             current_user.full_name,
             req.new_password,

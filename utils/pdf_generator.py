@@ -98,15 +98,15 @@ def _fmt(amount) -> str:
 
 
 def _fc_whole_plain(amount) -> str:
-    """Whole naira format with no commas/decimals — amount is in kobo."""
+    """Whole naira format with comma separators, no decimals — amount is in kobo."""
     naira = int(round(float(amount) / 100))
     prefix = "₦" if _FONT != "Helvetica" else "NGN "
-    return f"{prefix}{naira}"
+    return f"{prefix}{naira:,}"
 
 
 def _fmt_whole_plain(amount) -> str:
-    """Whole naira numeric format with no commas/decimals — amount is in kobo."""
-    return str(int(round(float(amount) / 100)))
+    """Whole naira numeric format with comma separators, no decimals — amount is in kobo."""
+    return f"{int(round(float(amount) / 100)):,}"
 
 
 def _fmt_qty(qty) -> str:
