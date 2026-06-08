@@ -375,6 +375,28 @@ class QuotationItemOut(BaseModel):
     line_total: int                  # kobo
 
 
+class QuotationListOut(BaseModel):
+    """Lightweight schema used only for list/table views — no nested collections."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    quotation_number: str
+    customer_id: int
+    customer_name: Optional[str] = None
+    quotation_date: date
+    delivery_type: DeliveryType
+    payment_term: str
+    status: QuotationStatus
+    notes: Optional[str] = None
+    delivery_fee: Optional[int] = 0
+    total_amount: int
+    created_by: int
+    created_by_name: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class QuotationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -440,6 +462,29 @@ class InvoiceItemOut(BaseModel):
     payment_term_markup_amount: int  # kobo
     unit_price: int                  # kobo
     line_total: int                  # kobo
+
+
+class InvoiceListOut(BaseModel):
+    """Lightweight schema used only for list/table views — no nested collections."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    invoice_number: str
+    quotation_id: Optional[int] = None
+    customer_id: int
+    customer_name: Optional[str] = None
+    invoice_date: date
+    payment_term: str
+    due_date: Optional[date] = None
+    delivery_type: DeliveryType
+    status: InvoiceStatus
+    delivery_fee: Optional[int] = 0
+    handling_charge_enabled: bool = True
+    handling_charge_amount: int = 0
+    total_amount: int
+    amount_paid: int = 0
+    created_at: datetime
+    updated_at: datetime
 
 
 class InvoiceOut(BaseModel):

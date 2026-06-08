@@ -9,7 +9,7 @@ import base64
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 import models
 import schemas
@@ -227,7 +227,7 @@ def list_quotations(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> List[models.Quotation]:
-    quotation_query = db.query(models.Quotation)
+    quotation_query = db.query(models.Quotation).options(joinedload(models.Quotation.customer))
     if status:
         quotation_query = quotation_query.filter(models.Quotation.status == status)
     if customer_id:

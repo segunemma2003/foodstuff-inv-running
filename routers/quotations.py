@@ -34,7 +34,7 @@ def preview_price(
     return quotations_service.preview_price(body, db)
 
 
-@router.get("", response_model=List[schemas.QuotationOut])
+@router.get("", response_model=List[schemas.QuotationListOut])
 def list_quotations(
     skip: int = 0,
     limit: int = 50,

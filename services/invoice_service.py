@@ -12,7 +12,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 import models
 import schemas
@@ -180,7 +180,7 @@ def list_invoices(
     payment_term: Optional[str] = None,
     delivery_type: Optional[str] = None,
 ):
-    invoice_query = db.query(models.Invoice)
+    invoice_query = db.query(models.Invoice).options(joinedload(models.Invoice.customer))
     if customer_id:
         invoice_query = invoice_query.filter(models.Invoice.customer_id == customer_id)
     if status:
