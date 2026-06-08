@@ -279,6 +279,8 @@ class Invoice(Base):
     status = Column(SAEnum(InvoiceStatus), default=InvoiceStatus.active)
     notes = Column(Text)
     delivery_fee = Column(BigInteger, default=0)
+    handling_charge_enabled = Column(Boolean, default=True)
+    handling_charge_amount = Column(BigInteger, default=0)
     total_amount = Column(BigInteger, default=0)
     amount_paid = Column(BigInteger, default=0)
     custom_pdf_s3_key = Column(String(255), nullable=True)

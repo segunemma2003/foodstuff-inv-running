@@ -302,6 +302,9 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
             )
         )
 
+    handling_charge_amount = int(round(total_amount * 5 / 100)) if body.apply_handling_charge else 0
+    grand_total = total_amount + handling_charge_amount
+
     inv = models.Invoice(
         invoice_number=next_invoice_number(db),
         quotation_id=None,
@@ -311,7 +314,9 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
         payment_term=body.payment_term,
         delivery_type=delivery_type,
         notes=body.notes,
-        total_amount=total_amount,
+        handling_charge_enabled=body.apply_handling_charge,
+        handling_charge_amount=handling_charge_amount,
+        total_amount=grand_total,
         amount_paid=0,
         created_by=current_user.id,
         items=line_items,

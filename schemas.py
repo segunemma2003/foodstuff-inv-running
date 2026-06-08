@@ -418,6 +418,7 @@ class InvoiceCreate(BaseModel):
     payment_term: str = "cash"
     delivery_type: str = "pickup"
     notes: Optional[str] = None
+    apply_handling_charge: bool = True
     items: List[InvoiceItemCreate]
 
 
@@ -457,6 +458,8 @@ class InvoiceOut(BaseModel):
     status: InvoiceStatus
     notes: Optional[str] = None
     delivery_fee: Optional[int] = 0          # kobo
+    handling_charge_enabled: bool = True
+    handling_charge_amount: int = 0          # kobo (5% of subtotal)
     total_amount: int                        # kobo
     amount_paid: int = 0                     # kobo
     custom_pdf_s3_key: Optional[str] = None

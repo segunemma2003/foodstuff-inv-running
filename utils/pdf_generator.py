@@ -279,6 +279,7 @@ def _totals_section(
     styles,
     delivery_fee: Decimal = Decimal("0"),
     plain_whole_naira: bool = False,
+    handling_charge_amount: Decimal = Decimal("0"),
 ) -> list:
     balance = max(Decimal("0"), total_amount - amount_paid)
     format_currency = _fc_whole_plain if plain_whole_naira else _fc
@@ -287,12 +288,17 @@ def _totals_section(
     _VW = 3.5  * cm   # value column width
 
     rows = []
-    if delivery_fee > 0:
-        subtotal = total_amount - delivery_fee
+    has_extras = delivery_fee > 0 or handling_charge_amount > 0
+    if has_extras:
+        subtotal = total_amount - delivery_fee - handling_charge_amount
         rows.append([Paragraph("Subtotal:", styles["Right"]),
                      Paragraph(format_currency(subtotal), styles["Right"])])
+    if delivery_fee > 0:
         rows.append([Paragraph("Delivery Fee:", styles["Right"]),
                      Paragraph(format_currency(delivery_fee), styles["Right"])])
+    if handling_charge_amount > 0:
+        rows.append([Paragraph("Handling Charge (5%):", styles["Right"]),
+                     Paragraph(format_currency(handling_charge_amount), styles["Right"])])
 
     total_row_idx = len(rows)
     rows.append([Paragraph("<b>Total (VAT incl.):</b>", styles["BoldRight"]),
@@ -479,6 +485,7 @@ def generate_invoice_pdf(
         styles,
         Decimal(str(invoice.delivery_fee or 0)),
         plain_whole_naira=True,
+        handling_charge_amount=Decimal(str(getattr(invoice, "handling_charge_amount", 0) or 0)),
     )
     story += _payment_section(
         invoice.payment_term, invoice.invoice_number, bank_accounts or [], styles
