@@ -16,11 +16,25 @@ def _not_cancelled_invoice_filter():
     return func.lower(models.Invoice.status.cast(String)) != "cancelled"
 
 
+def list_customers_for_dropdown(db: Session) -> List[schemas.CustomerDropdownItem]:
+    """Ultra-light query — only id, customer_name, business_name. No subqueries."""
+    rows = (
+        db.query(models.Customer.id, models.Customer.customer_name, models.Customer.business_name)
+        .filter(models.Customer.is_active == True)
+        .order_by(models.Customer.customer_name)
+        .all()
+    )
+    return [
+        schemas.CustomerDropdownItem(id=r.id, customer_name=r.customer_name, business_name=r.business_name)
+        for r in rows
+    ]
+
+
 def list_customers(
     db: Session,
     *,
     skip: int = 0,
-    limit: int = 50,
+    limit: int = 500,
     search: Optional[str] = None,
     category: Optional[str] = None,
     is_active: Optional[bool] = None,

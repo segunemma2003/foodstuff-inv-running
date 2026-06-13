@@ -87,34 +87,34 @@ def _ensure_unicode_font():
 
 def _fc(amount) -> str:
     """Currency format with Naira symbol — amount is in kobo."""
-    naira = float(amount) / 100
+    naira = int(round(float(amount) / 100))
     prefix = "₦" if _FONT != "Helvetica" else "NGN "
-    return f"{prefix}{naira:,.2f}"
+    return f"{prefix}{naira}"
 
 
 def _fmt(amount) -> str:
     """Plain number format for line-item cells — amount is in kobo."""
-    return f"{float(amount) / 100:,.2f}"
+    return str(int(round(float(amount) / 100)))
 
 
 def _fc_whole_plain(amount) -> str:
-    """Whole naira format with comma separators, no decimals — amount is in kobo."""
+    """Whole naira format, no decimals, no comma separators — amount is in kobo."""
     naira = int(round(float(amount) / 100))
     prefix = "₦" if _FONT != "Helvetica" else "NGN "
-    return f"{prefix}{naira:,}"
+    return f"{prefix}{naira}"
 
 
 def _fmt_whole_plain(amount) -> str:
-    """Whole naira numeric format with comma separators, no decimals — amount is in kobo."""
-    return f"{int(round(float(amount) / 100)):,}"
+    """Whole naira numeric format, no decimals, no comma separators — amount is in kobo."""
+    return str(int(round(float(amount) / 100)))
 
 
 def _fmt_qty(qty) -> str:
     """Format quantity — strip trailing zeros."""
     v = float(qty)
     if v == int(v):
-        return f"{int(v):,}"
-    return f"{v:,.3f}".rstrip("0").rstrip(".")
+        return str(int(v))
+    return f"{v:.3f}".rstrip("0").rstrip(".")
 
 
 def _fmt_date(d) -> str:

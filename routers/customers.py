@@ -28,6 +28,14 @@ def list_customers(
     )
 
 
+@router.get("/dropdown", response_model=List[schemas.CustomerDropdownItem])
+def list_customers_dropdown(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    return customer_service.list_customers_for_dropdown(db)
+
+
 @router.post("", response_model=schemas.CustomerOut, status_code=201)
 def create_customer(
     body: schemas.CustomerCreate,

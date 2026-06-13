@@ -146,6 +146,15 @@ class CustomerUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class CustomerDropdownItem(BaseModel):
+    """Minimal customer record for select/combobox dropdowns."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    customer_name: str
+    business_name: Optional[str] = None
+
+
 class CustomerOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
