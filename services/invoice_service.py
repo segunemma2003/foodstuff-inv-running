@@ -640,12 +640,33 @@ def upload_invoice_to_make(
     inv = get_invoice(db, invoice_id)
 
     if inv.custom_pdf_s3_key:
+        invoice_data = {
+            "total_amount": int(round((inv.total_amount or 0) / 100)),
+            "amount_paid": int(round((inv.amount_paid or 0) / 100)),
+            "delivery_fee": int(round((inv.delivery_fee or 0) / 100)),
+            "handling_charge": int(round((inv.handling_charge_amount or 0) / 100)),
+            "payment_term": inv.payment_term,
+            "delivery_type": inv.delivery_type.value if inv.delivery_type else "",
+            "invoice_date": str(inv.invoice_date) if inv.invoice_date else "",
+            "due_date": str(inv.due_date) if inv.due_date else "",
+            "items": [
+                {
+                    "product_name": item.product_name or f"Product #{item.product_id}",
+                    "quantity": float(item.quantity),
+                    "uom": item.uom or "",
+                    "unit_price": int(round((item.unit_price or 0) / 100)),
+                    "line_total": int(round((item.line_total or 0) / 100)),
+                }
+                for item in inv.items
+            ],
+        }
         send_document_to_make_from_s3(
             doc_type="invoice",
             document_number=inv.invoice_number,
             s3_key=inv.custom_pdf_s3_key,
             filename=f"{inv.invoice_number}.pdf",
             customer_name=inv.customer.customer_name if inv.customer else "",
+            extra=invoice_data,
         )
 
     emails: List[str] = [INVOICE_PRIMARY_RECIPIENT]
