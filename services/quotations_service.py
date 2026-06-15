@@ -152,6 +152,8 @@ def _build_invoice_from_quotation(
         due_date=due,
         delivery_type=quotation.delivery_type,
         delivery_fee=quotation.delivery_fee or 0,
+        handling_charge_enabled=quotation.handling_charge_enabled if quotation.handling_charge_enabled is not None else True,
+        handling_charge_amount=quotation.handling_charge_amount or 0,
         total_amount=quotation.total_amount,
         notes=quotation.notes,
         created_by=actor_user.id,
@@ -257,7 +259,10 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
 
     items, subtotal = _calc_and_build_items(body.items, body.delivery_type, body.payment_term, db)
     delivery_fee = int(body.delivery_fee or 0)
-    total = subtotal + delivery_fee
+    items_total = subtotal + delivery_fee
+    apply_handling = getattr(body, "apply_handling_charge", True)
+    handling_charge_amount = int(round(items_total * 5 / 100)) if apply_handling else 0
+    total = items_total + handling_charge_amount
     quotation = models.Quotation(
         quotation_number=next_quotation_number(db),
         customer_id=body.customer_id,
@@ -266,6 +271,8 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
         payment_term=body.payment_term,
         notes=body.notes,
         delivery_fee=delivery_fee,
+        handling_charge_enabled=apply_handling,
+        handling_charge_amount=handling_charge_amount,
         total_amount=total,
         created_by=current_user.id,
         status=models.QuotationStatus.draft,

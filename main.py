@@ -129,6 +129,12 @@ def run_migrations():
             conn.execute(text(
                 "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS handling_charge_amount BIGINT NOT NULL DEFAULT 0"
             ))
+            conn.execute(text(
+                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS handling_charge_enabled BOOLEAN NOT NULL DEFAULT TRUE"
+            ))
+            conn.execute(text(
+                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS handling_charge_amount BIGINT NOT NULL DEFAULT 0"
+            ))
             # Indexes for common list-query sort/filter columns
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices(created_at DESC)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status)"))

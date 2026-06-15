@@ -213,6 +213,8 @@ class Quotation(Base):
     status = Column(SAEnum(QuotationStatus), default=QuotationStatus.draft)
     notes = Column(Text)
     delivery_fee = Column(BigInteger, default=0)
+    handling_charge_enabled = Column(Boolean, default=True)
+    handling_charge_amount = Column(BigInteger, default=0)
     total_amount = Column(BigInteger, default=0)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     approved_by = Column(Integer, ForeignKey("users.id"))

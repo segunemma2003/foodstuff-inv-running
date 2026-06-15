@@ -327,6 +327,7 @@ class QuotationCreate(BaseModel):
     payment_term: str
     notes: Optional[str] = None
     delivery_fee: Optional[int] = 0                 # kobo
+    apply_handling_charge: bool = True
     items: List[QuotationItemCreate]
 
 
@@ -398,6 +399,8 @@ class QuotationListOut(BaseModel):
     status: QuotationStatus
     notes: Optional[str] = None
     delivery_fee: Optional[int] = 0
+    handling_charge_enabled: bool = True
+    handling_charge_amount: int = 0
     total_amount: int
     created_by: int
     created_by_name: Optional[str] = None
@@ -420,6 +423,8 @@ class QuotationOut(BaseModel):
     status: QuotationStatus
     notes: Optional[str] = None
     delivery_fee: Optional[int] = 0          # kobo
+    handling_charge_enabled: bool = True
+    handling_charge_amount: int = 0          # kobo (5% of subtotal)
     total_amount: int                        # kobo
     created_by: int
     creator: Optional[UserOut] = None

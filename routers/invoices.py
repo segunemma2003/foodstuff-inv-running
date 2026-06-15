@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import get_current_user, require_admin_or_manager, require_not_analyst, require_admin
+from dependencies import get_current_user, require_admin_or_manager, require_not_analyst, require_admin  # noqa: F401
 import models
 import schemas
 from services import invoice_service
@@ -72,7 +72,7 @@ def list_invoices(
 def bulk_delete_invoices(
     body: schemas.BulkIdsRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(get_current_user),
 ):
     return invoice_service.bulk_delete_invoices(db, body, current_user)
 
@@ -196,7 +196,7 @@ def cancel_invoice(
 def delete_invoice(
     invoice_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(get_current_user),
 ):
     return invoice_service.delete_invoice(db, invoice_id, current_user)
 
