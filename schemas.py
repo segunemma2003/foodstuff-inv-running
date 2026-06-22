@@ -328,6 +328,8 @@ class QuotationCreate(BaseModel):
     notes: Optional[str] = None
     delivery_fee: Optional[int] = 0                 # kobo
     apply_handling_charge: bool = True
+    apply_vat: bool = False
+    apply_markup_17: bool = False
     items: List[QuotationItemCreate]
 
 
@@ -401,6 +403,10 @@ class QuotationListOut(BaseModel):
     delivery_fee: Optional[int] = 0
     handling_charge_enabled: bool = True
     handling_charge_amount: int = 0
+    vat_enabled: bool = False
+    vat_amount: int = 0
+    markup_17_enabled: bool = False
+
     total_amount: int
     created_by: int
     created_by_name: Optional[str] = None
@@ -425,6 +431,10 @@ class QuotationOut(BaseModel):
     delivery_fee: Optional[int] = 0          # kobo
     handling_charge_enabled: bool = True
     handling_charge_amount: int = 0          # kobo (5% of subtotal)
+    vat_enabled: bool = False
+    vat_amount: int = 0                      # kobo (7.5% of subtotal)
+    markup_17_enabled: bool = False
+
     total_amount: int                        # kobo
     created_by: int
     creator: Optional[UserOut] = None
@@ -495,6 +505,10 @@ class InvoiceListOut(BaseModel):
     delivery_fee: Optional[int] = 0
     handling_charge_enabled: bool = True
     handling_charge_amount: int = 0
+    vat_enabled: bool = False
+    vat_amount: int = 0
+    markup_17_enabled: bool = False
+
     total_amount: int
     amount_paid: int = 0
     created_at: datetime
@@ -519,6 +533,10 @@ class InvoiceOut(BaseModel):
     delivery_fee: Optional[int] = 0          # kobo
     handling_charge_enabled: bool = True
     handling_charge_amount: int = 0          # kobo (5% of subtotal)
+    vat_enabled: bool = False
+    vat_amount: int = 0                      # kobo (7.5% of subtotal)
+    markup_17_enabled: bool = False
+
     total_amount: int                        # kobo
     amount_paid: int = 0                     # kobo
     custom_pdf_s3_key: Optional[str] = None

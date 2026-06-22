@@ -39,10 +39,10 @@ def seed_defaults(db: Session):
         db.add(admin)
         db.flush()
 
-    # Default pricing rules
+    # Default pricing rules — supply and delivery only seed when table is empty
+    today = date.today()
     if db.query(models.PricingRule).count() == 0:
-        today = date.today()
-        rules = [
+        db.add_all([
             models.PricingRule(
                 rule_name="Supply Markup",
                 rule_type=models.PricingRuleType.supply,
@@ -61,18 +61,34 @@ def seed_defaults(db: Session):
                 created_by=admin.id,
                 updated_by=admin.id,
             ),
-            models.PricingRule(
-                rule_name="Net 30 Markup",
+        ])
+
+    # Payment-term rules — insert missing ones by code so they're always present
+    existing_pt_codes = {
+        r.payment_term_code
+        for r in db.query(models.PricingRule).filter(
+            models.PricingRule.rule_type == models.PricingRuleType.payment_term
+        ).all()
+        if r.payment_term_code
+    }
+    default_pt_rules = [
+        ("Net 15 Markup", "net_15", 2.5),
+        ("Net 30 Markup", "net_30", 3.5),
+        ("Net 60 Markup", "net_60", 5.0),
+        ("Net 90 Markup", "net_90", 7.0),
+    ]
+    for rule_name, code, pct in default_pt_rules:
+        if code not in existing_pt_codes:
+            db.add(models.PricingRule(
+                rule_name=rule_name,
                 rule_type=models.PricingRuleType.payment_term,
-                markup_percentage=3.5,
-                payment_term_code="net_30",
+                markup_percentage=pct,
+                payment_term_code=code,
                 is_active=True,
                 effective_date=today,
                 created_by=admin.id,
                 updated_by=admin.id,
-            ),
-        ]
-        db.add_all(rules)
+            ))
 
     # Default app settings
     defaults = [
@@ -134,6 +150,30 @@ def run_migrations():
             ))
             conn.execute(text(
                 "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS handling_charge_amount BIGINT NOT NULL DEFAULT 0"
+            ))
+            conn.execute(text(
+                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.execute(text(
+                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS vat_amount BIGINT NOT NULL DEFAULT 0"
+            ))
+            conn.execute(text(
+                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.execute(text(
+                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS vat_amount BIGINT NOT NULL DEFAULT 0"
+            ))
+            conn.execute(text(
+                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS markup_17_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.execute(text(
+                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS markup_17_amount BIGINT NOT NULL DEFAULT 0"
+            ))
+            conn.execute(text(
+                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS markup_17_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.execute(text(
+                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS markup_17_amount BIGINT NOT NULL DEFAULT 0"
             ))
             # Indexes for common list-query sort/filter columns
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices(created_at DESC)"))

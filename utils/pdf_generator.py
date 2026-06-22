@@ -280,6 +280,7 @@ def _totals_section(
     delivery_fee: Decimal = Decimal("0"),
     plain_whole_naira: bool = False,
     handling_charge_amount: Decimal = Decimal("0"),
+    vat_amount: Decimal = Decimal("0"),
 ) -> list:
     balance = max(Decimal("0"), total_amount - amount_paid)
     format_currency = _fc_whole_plain if plain_whole_naira else _fc
@@ -288,9 +289,11 @@ def _totals_section(
     _VW = 3.5  * cm   # value column width
 
     rows = []
-    has_extras = delivery_fee > 0 or handling_charge_amount > 0
+    charges = delivery_fee + handling_charge_amount + vat_amount
+    has_extras = charges > 0
     if has_extras:
-        subtotal = total_amount - delivery_fee - handling_charge_amount
+        # True line-items subtotal = grand total minus all added charges
+        subtotal = total_amount - charges
         rows.append([Paragraph("Subtotal:", styles["Right"]),
                      Paragraph(format_currency(subtotal), styles["Right"])])
     if delivery_fee > 0:
@@ -299,9 +302,13 @@ def _totals_section(
     if handling_charge_amount > 0:
         rows.append([Paragraph("Handling Charge (5%):", styles["Right"]),
                      Paragraph(format_currency(handling_charge_amount), styles["Right"])])
+    if vat_amount > 0:
+        rows.append([Paragraph("VAT (7.5%):", styles["Right"]),
+                     Paragraph(format_currency(vat_amount), styles["Right"])])
 
+    total_label = "<b>Total:</b>" if vat_amount == 0 else "<b>Total (VAT incl.):</b>"
     total_row_idx = len(rows)
-    rows.append([Paragraph("<b>Total (VAT incl.):</b>", styles["BoldRight"]),
+    rows.append([Paragraph(total_label, styles["BoldRight"]),
                  Paragraph(f"<b>{format_currency(total_amount)}</b>", styles["BoldRight"])])
 
     if amount_paid > 0:
@@ -427,7 +434,14 @@ def generate_quotation_pdf(quotation: models.Quotation, bank_accounts: list = No
     story.append(Spacer(1, 0.4 * cm))
     story.append(_items_table(quotation.items, styles))
     story.append(Spacer(1, 0.2 * cm))
-    story += _totals_section(quotation.total_amount, Decimal("0"), styles, Decimal(str(quotation.delivery_fee or 0)))
+    story += _totals_section(
+        quotation.total_amount,
+        Decimal("0"),
+        styles,
+        Decimal(str(quotation.delivery_fee or 0)),
+        handling_charge_amount=Decimal(str(getattr(quotation, "handling_charge_amount", 0) or 0)),
+        vat_amount=Decimal(str(getattr(quotation, "vat_amount", 0) or 0)),
+    )
 
     story += _payment_section(
         quotation.payment_term, quotation.quotation_number, bank_accounts or [], styles
@@ -486,6 +500,7 @@ def generate_invoice_pdf(
         Decimal(str(invoice.delivery_fee or 0)),
         plain_whole_naira=True,
         handling_charge_amount=Decimal(str(getattr(invoice, "handling_charge_amount", 0) or 0)),
+        vat_amount=Decimal(str(getattr(invoice, "vat_amount", 0) or 0)),
     )
     story += _payment_section(
         invoice.payment_term, invoice.invoice_number, bank_accounts or [], styles

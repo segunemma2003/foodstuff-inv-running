@@ -68,6 +68,7 @@ def calculate_item_price(
     delivery_type: str,
     payment_term: str,
     rules: dict,
+    apply_markup_17: bool = False,
 ) -> dict:
     """
     Calculate per-unit pricing breakdown.
@@ -103,7 +104,10 @@ def calculate_item_price(
         pt_pct = Decimal(str(pt_rule.markup_percentage)) / 100
         pt_amount = _round(cost_price * pt_pct)
 
-    unit_price = math.ceil((int(cost_price) + supply_amount + delivery_amount + pt_amount) / 100) * 100
+    base_unit = int(cost_price) + supply_amount + delivery_amount + pt_amount
+    if apply_markup_17:
+        base_unit = math.ceil(base_unit * 1.17 / 100) * 100
+    unit_price = math.ceil(base_unit / 100) * 100
 
     return {
         "supply_markup_pct": float(supply_pct * 100),
