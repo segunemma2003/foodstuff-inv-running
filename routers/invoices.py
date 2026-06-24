@@ -40,7 +40,7 @@ async def bulk_upload_invoices(
     return await invoice_service.bulk_upload_invoices(file, current_user)
 
 
-@router.get("", response_model=List[schemas.InvoiceListOut])
+@router.get("", response_model=schemas.InvoiceListPage)
 def list_invoices(
     skip: int = 0,
     limit: int = 50,

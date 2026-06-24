@@ -515,6 +515,15 @@ class InvoiceListOut(BaseModel):
     updated_at: datetime
 
 
+class InvoiceListPage(BaseModel):
+    """Paginated invoice list from GET /invoices."""
+
+    total: int
+    skip: int
+    limit: int
+    items: List[InvoiceListOut]
+
+
 class InvoiceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

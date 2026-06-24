@@ -179,7 +179,10 @@ def list_invoices(
     date_to: Optional[date] = None,
     payment_term: Optional[str] = None,
     delivery_type: Optional[str] = None,
-):
+) -> schemas.InvoiceListPage:
+    skip = max(skip, 0)
+    limit = min(max(limit, 1), 200)
+
     invoice_query = db.query(models.Invoice).options(joinedload(models.Invoice.customer))
     if customer_id:
         invoice_query = invoice_query.filter(models.Invoice.customer_id == customer_id)
@@ -195,7 +198,15 @@ def list_invoices(
         invoice_query = invoice_query.filter(models.Invoice.payment_term == payment_term)
     if delivery_type:
         invoice_query = invoice_query.filter(models.Invoice.delivery_type == delivery_type)
-    return invoice_query.order_by(models.Invoice.created_at.desc()).offset(skip).limit(limit).all()
+
+    total = invoice_query.order_by(None).count()
+    items = (
+        invoice_query.order_by(models.Invoice.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return schemas.InvoiceListPage(total=total, skip=skip, limit=limit, items=items)
 
 
 def _delete_invoice_record(db: Session, invoice_id: int, current_user: models.User) -> schemas.MessageResponse:
