@@ -344,8 +344,8 @@ def customer_cost_of_sales(
         .all()
     )
 
-    total_cost = sum(float(product_row.cost or 0) for product_row in product_rows)
-    total_revenue = sum(float(product_row.revenue or 0) for product_row in product_rows)
+    total_cost = sum(float(product_row.cost or 0) / 100 for product_row in product_rows)
+    total_revenue = sum(float(product_row.revenue or 0) / 100 for product_row in product_rows)
     gross_profit = total_revenue - total_cost
     gross_margin = round(gross_profit / total_revenue * 100, 2) if total_revenue else 0
 
@@ -362,9 +362,9 @@ def customer_cost_of_sales(
                 "product_id": product_row.product_id,
                 "product_name": product_row.product_name,
                 "qty": float(product_row.qty or 0),
-                "cost": float(product_row.cost or 0),
-                "revenue": float(product_row.revenue or 0),
-                "gross_profit": float(product_row.revenue or 0) - float(product_row.cost or 0),
+                "cost": float(product_row.cost or 0) / 100,
+                "revenue": float(product_row.revenue or 0) / 100,
+                "gross_profit": (float(product_row.revenue or 0) - float(product_row.cost or 0)) / 100,
                 "margin_pct": round(
                     (float(product_row.revenue or 0) - float(product_row.cost or 0))
                     / float(product_row.revenue)
@@ -381,9 +381,9 @@ def customer_cost_of_sales(
                 "invoice_id": invoice_row.id,
                 "invoice_number": invoice_row.invoice_number,
                 "invoice_date": str(invoice_row.invoice_date),
-                "cost": float(invoice_row.cost or 0),
-                "revenue": float(invoice_row.revenue or 0),
-                "gross_profit": float(invoice_row.revenue or 0) - float(invoice_row.cost or 0),
+                "cost": float(invoice_row.cost or 0) / 100,
+                "revenue": float(invoice_row.revenue or 0) / 100,
+                "gross_profit": (float(invoice_row.revenue or 0) - float(invoice_row.cost or 0)) / 100,
                 "margin_pct": round(
                     (float(invoice_row.revenue or 0) - float(invoice_row.cost or 0))
                     / float(invoice_row.revenue)

@@ -35,7 +35,7 @@ def _sales_in_range(db: Session, start: date, end: date) -> float:
         )
         .scalar()
     )
-    return float(result or 0)
+    return float(result or 0) / 100
 
 
 def get_overview(db: Session) -> schemas.DashboardOverview:
@@ -134,7 +134,7 @@ def get_overview(db: Session) -> schemas.DashboardOverview:
         .group_by(models.Invoice.delivery_type)
         .all()
     )
-    delivery_vs_pickup = {r.delivery_type.value: float(r.total or 0) for r in delivery_rows}
+    delivery_vs_pickup = {r.delivery_type.value: float(r.total or 0) / 100 for r in delivery_rows}
 
     pt_rows = (
         db.query(models.Invoice.payment_term, func.sum(models.Invoice.total_amount).label("total"))
@@ -142,7 +142,7 @@ def get_overview(db: Session) -> schemas.DashboardOverview:
         .group_by(models.Invoice.payment_term)
         .all()
     )
-    sales_by_pt = {r.payment_term: float(r.total or 0) for r in pt_rows}
+    sales_by_pt = {r.payment_term: float(r.total or 0) / 100 for r in pt_rows}
 
     recent_invoices = (
         db.query(models.Invoice)
@@ -166,14 +166,14 @@ def get_overview(db: Session) -> schemas.DashboardOverview:
         sales_this_month=sales_month,
         active_customers=active_customers,
         products_sold_today=float(products_sold_today),
-        cost_of_sales_this_month=float(cos_month),
-        cost_of_sales_all_time=float(cos_all),
+        cost_of_sales_this_month=float(cos_month) / 100,
+        cost_of_sales_all_time=float(cos_all) / 100,
         top_customers=[
-            {"customer_id": r.id, "customer_name": r.customer_name, "total_sales": float(r.total)}
+            {"customer_id": r.id, "customer_name": r.customer_name, "total_sales": float(r.total or 0) / 100}
             for r in top_customers
         ],
         top_products=[
-            {"product_id": r.id, "product_name": r.product_name, "total_sales": float(r.total)}
+            {"product_id": r.id, "product_name": r.product_name, "total_sales": float(r.total or 0) / 100}
             for r in top_products
         ],
         delivery_vs_pickup=delivery_vs_pickup,
@@ -183,7 +183,7 @@ def get_overview(db: Session) -> schemas.DashboardOverview:
                 "id": inv.id,
                 "invoice_number": inv.invoice_number,
                 "customer_name": inv.customer.customer_name if inv.customer else "",
-                "total_amount": float(inv.total_amount),
+                "total_amount": float(inv.total_amount or 0) / 100,
                 "invoice_date": str(inv.invoice_date),
             }
             for inv in recent_invoices
@@ -193,7 +193,7 @@ def get_overview(db: Session) -> schemas.DashboardOverview:
                 "id": q.id,
                 "quotation_number": q.quotation_number,
                 "customer_name": q.customer.customer_name if q.customer else "",
-                "total_amount": float(q.total_amount),
+                "total_amount": float(q.total_amount or 0) / 100,
                 "status": q.status.value,
                 "quotation_date": str(q.quotation_date),
             }
@@ -269,8 +269,8 @@ def get_cost_of_sales_detail(
         .all()
     )
 
-    total_cost = sum(float(r.cost or 0) for r in product_rows)
-    total_revenue = sum(float(r.revenue or 0) for r in product_rows)
+    total_cost = sum(float(r.cost or 0) / 100 for r in product_rows)
+    total_revenue = sum(float(r.revenue or 0) / 100 for r in product_rows)
     gross_profit = total_revenue - total_cost
     gross_margin = round(gross_profit / total_revenue * 100, 2) if total_revenue else 0
 
@@ -286,12 +286,12 @@ def get_cost_of_sales_detail(
                 "product_id": r.product_id,
                 "product_name": r.product_name,
                 "qty": float(r.qty),
-                "unit_cost_price": (float(r.cost or 0) / float(r.qty))
+                "unit_cost_price": (float(r.cost or 0) / float(r.qty) / 100)
                 if float(r.qty or 0) > 0
                 else 0,
-                "cost": float(r.cost or 0),
-                "revenue": float(r.revenue or 0),
-                "gross_profit": float(r.revenue or 0) - float(r.cost or 0),
+                "cost": float(r.cost or 0) / 100,
+                "revenue": float(r.revenue or 0) / 100,
+                "gross_profit": (float(r.revenue or 0) - float(r.cost or 0)) / 100,
                 "margin_pct": round(
                     (float(r.revenue or 0) - float(r.cost or 0)) / float(r.revenue) * 100, 2
                 )
@@ -306,9 +306,9 @@ def get_cost_of_sales_detail(
                 "invoice_number": r.invoice_number,
                 "invoice_date": str(r.invoice_date),
                 "customer_name": r.customer_name,
-                "cost": float(r.cost or 0),
-                "revenue": float(r.revenue or 0),
-                "gross_profit": float(r.revenue or 0) - float(r.cost or 0),
+                "cost": float(r.cost or 0) / 100,
+                "revenue": float(r.revenue or 0) / 100,
+                "gross_profit": (float(r.revenue or 0) - float(r.cost or 0)) / 100,
                 "margin_pct": round(
                     (float(r.revenue or 0) - float(r.cost or 0)) / float(r.revenue) * 100, 2
                 )

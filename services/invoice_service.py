@@ -428,6 +428,20 @@ def update_invoice(db: Session, invoice_id: int, body: schemas.InvoiceUpdate, cu
         inv.handling_charge_amount = handling_charge_amount
         inv.total_amount = subtotal + handling_charge_amount
 
+    if inv.quotation_id:
+        qt = db.query(models.Quotation).filter(models.Quotation.id == inv.quotation_id).first()
+        if qt:
+            if body.delivery_type is not None:
+                qt.delivery_type = inv.delivery_type
+            if body.payment_term is not None:
+                qt.payment_term = inv.payment_term
+            if body.notes is not None:
+                qt.notes = inv.notes
+            if body.items is not None or body.apply_handling_charge is not None:
+                qt.handling_charge_enabled = inv.handling_charge_enabled
+                qt.handling_charge_amount = inv.handling_charge_amount
+                qt.total_amount = inv.total_amount
+
     audit.log(
         db,
         models.AuditAction.update,
@@ -512,8 +526,8 @@ def download_invoice_cost_of_sales_pdf(db: Session, invoice_id: int):
         .all()
     )
 
-    total_cost = sum(float(product_row.cost or 0) for product_row in item_rows)
-    total_revenue = sum(float(product_row.revenue or 0) for product_row in item_rows)
+    total_cost = sum(float(product_row.cost or 0) / 100 for product_row in item_rows)
+    total_revenue = sum(float(product_row.revenue or 0) / 100 for product_row in item_rows)
     gross_profit = total_revenue - total_cost
     gross_margin = round(gross_profit / total_revenue * 100, 2) if total_revenue else 0
 
@@ -533,12 +547,12 @@ def download_invoice_cost_of_sales_pdf(db: Session, invoice_id: int):
                 "product_id": product_row.product_id,
                 "product_name": product_row.product_name,
                 "qty": float(product_row.qty or 0),
-                "unit_cost_price": (float(product_row.cost or 0) / float(product_row.qty or 0))
+                "unit_cost_price": (float(product_row.cost or 0) / float(product_row.qty or 0) / 100)
                 if float(product_row.qty or 0) > 0
                 else 0,
-                "cost": float(product_row.cost or 0),
-                "revenue": float(product_row.revenue or 0),
-                "gross_profit": float(product_row.revenue or 0) - float(product_row.cost or 0),
+                "cost": float(product_row.cost or 0) / 100,
+                "revenue": float(product_row.revenue or 0) / 100,
+                "gross_profit": (float(product_row.revenue or 0) - float(product_row.cost or 0)) / 100,
                 "margin_pct": round(
                     (float(product_row.revenue or 0) - float(product_row.cost or 0))
                     / float(product_row.revenue)

@@ -65,7 +65,7 @@ def build_sales(db: Session, params: dict) -> Tuple[openpyxl.Workbook, str]:
             inv.invoice_number, str(inv.invoice_date),
             inv.customer.customer_name if inv.customer else "",
             inv.payment_term, inv.delivery_type.value,
-            float(inv.total_amount),
+            float(inv.total_amount or 0) / 100,
             inv.creator.full_name if inv.creator else "",
         ])
     return wb, "sales_report.xlsx"
@@ -94,7 +94,7 @@ def build_invoices(db: Session, params: dict) -> Tuple[openpyxl.Workbook, str]:
             inv.customer.customer_name if inv.customer else "",
             inv.payment_term, inv.delivery_type.value,
             str(inv.due_date) if inv.due_date else "",
-            float(inv.total_amount), inv.status.value,
+            float(inv.total_amount or 0) / 100, inv.status.value,
             inv.creator.full_name if inv.creator else "",
         ])
     return wb, "invoice_report.xlsx"
@@ -123,7 +123,7 @@ def build_quotations(db: Session, params: dict) -> Tuple[openpyxl.Workbook, str]
             quot.quotation_number, str(quot.quotation_date),
             quot.customer.customer_name if quot.customer else "",
             quot.payment_term, quot.delivery_type.value,
-            float(quot.total_amount), quot.status.value,
+            float(quot.total_amount or 0) / 100, quot.status.value,
             quot.creator.full_name if quot.creator else "",
             quot.approver.full_name if quot.approver else "",
         ])
@@ -157,7 +157,7 @@ def build_customer_sales(db: Session, params: dict) -> Tuple[openpyxl.Workbook, 
     _bold_row(ws)
     for r in rows:
         ws.append([r.id, r.customer_name, r.business_name or "",
-                   r.city or "", r.invoice_count, float(r.total_sales or 0)])
+                   r.city or "", r.invoice_count, float(r.total_sales or 0) / 100])
     return wb, "customer_sales_report.xlsx"
 
 
@@ -190,7 +190,7 @@ def build_product_sales(db: Session, params: dict) -> Tuple[openpyxl.Workbook, s
     _bold_row(ws)
     for r in rows:
         ws.append([r.id, r.product_name, r.sku or "", float(r.total_qty or 0),
-                   float(r.total_revenue or 0), r.invoice_count, r.customer_count])
+                   float(r.total_revenue or 0) / 100, r.invoice_count, r.customer_count])
     return wb, "product_sales_report.xlsx"
 
 
@@ -214,7 +214,7 @@ def build_cost_price_history(db: Session, params: dict) -> Tuple[openpyxl.Workbo
             cp.product_id,
             cp.product.product_name if cp.product else "",
             cp.product.sku if cp.product else "",
-            float(cp.cost_price), str(cp.effective_date),
+            float(cp.cost_price or 0) / 100, str(cp.effective_date),
             cp.notes or "",
             cp.creator.full_name if cp.creator else "",
             str(cp.created_at),
@@ -246,7 +246,7 @@ def build_staff_performance(db: Session, params: dict) -> Tuple[openpyxl.Workboo
         ic_data = db.query(func.count(models.Invoice.id),
                            func.sum(models.Invoice.total_amount)).filter(*i_filter).first()
         ic = ic_data[0] or 0
-        it = float(ic_data[1] or 0)
+        it = float(ic_data[1] or 0) / 100
         conv = round(ic / qc * 100, 2) if qc else 0
         ws.append([u.id, u.full_name, u.username, u.role.value, qc, ic, it, conv])
     return wb, "staff_performance_report.xlsx"
