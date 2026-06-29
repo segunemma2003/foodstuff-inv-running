@@ -15,7 +15,7 @@ from routers import (
     auth, users, customers, products, cost_prices,
     pricing_rules, quotations, invoices, dashboard,
     analytics, reports, audit_trail, settings, jobs,
-    payment_accounts, payments,
+    payment_accounts, payments, custom_orders,
 )
 
 
@@ -253,6 +253,7 @@ app.include_router(settings.router,          prefix=PREFIX)
 app.include_router(jobs.router,              prefix=PREFIX)
 app.include_router(payment_accounts.router,  prefix=PREFIX)
 app.include_router(payments.router,          prefix=PREFIX)
+app.include_router(custom_orders.router,     prefix=PREFIX)
 
 
 @app.get("/", tags=["Health"])
