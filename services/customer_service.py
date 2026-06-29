@@ -123,21 +123,28 @@ def update_customer(
     return c
 
 
-def deactivate_customer(db: Session, customer_id: int, current_user: models.User) -> schemas.MessageResponse:
+def delete_customer(db: Session, customer_id: int, current_user: models.User) -> schemas.MessageResponse:
     c = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
     if not c:
         raise HTTPException(404, "Customer not found")
-    c.is_active = False
+
+    has_invoices = db.query(models.Invoice.id).filter(models.Invoice.customer_id == customer_id).first()
+    has_quotations = db.query(models.Quotation.id).filter(models.Quotation.customer_id == customer_id).first()
+    if has_invoices or has_quotations:
+        raise HTTPException(400, "Cannot delete customer with existing invoices or quotations. Remove them first.")
+
+    name = c.customer_name
     audit.log(
         db,
-        models.AuditAction.deactivate,
+        models.AuditAction.delete,
         models.AuditEntity.customer,
         c.id,
         current_user.id,
-        description=f"Deactivated customer {c.customer_name}",
+        description=f"Deleted customer {name}",
     )
+    db.delete(c)
     db.commit()
-    return schemas.MessageResponse(message="Customer deactivated")
+    return schemas.MessageResponse(message=f"Customer '{name}' permanently deleted")
 
 
 def customer_quotations(

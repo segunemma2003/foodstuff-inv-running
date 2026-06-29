@@ -95,6 +95,16 @@ def get_invoice(
     return invoice_service.get_invoice(db, invoice_id)
 
 
+@router.put("/{invoice_id}", response_model=schemas.InvoiceOut)
+def update_invoice(
+    invoice_id: int,
+    body: schemas.InvoiceUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    return invoice_service.update_invoice(db, invoice_id, body, current_user)
+
+
 @router.get("/{invoice_id}/pdf")
 def download_invoice_pdf(
     invoice_id: int,

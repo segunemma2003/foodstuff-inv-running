@@ -346,6 +346,101 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
     return inv
 
 
+def update_invoice(db: Session, invoice_id: int, body: schemas.InvoiceUpdate, current_user: models.User) -> models.Invoice:
+    inv = get_invoice(db, invoice_id)
+    if inv.status == models.InvoiceStatus.cancelled:
+        raise HTTPException(400, "Cannot edit a cancelled invoice")
+
+    if body.customer_id is not None:
+        customer = db.query(models.Customer).filter(models.Customer.id == body.customer_id).first()
+        if not customer:
+            raise HTTPException(404, "Customer not found")
+        inv.customer_id = body.customer_id
+
+    if body.invoice_date is not None:
+        inv.invoice_date = body.invoice_date
+    if body.due_date is not None:
+        inv.due_date = body.due_date
+    if body.payment_term is not None:
+        inv.payment_term = body.payment_term
+    if body.delivery_type is not None:
+        try:
+            inv.delivery_type = models.DeliveryType(body.delivery_type)
+        except ValueError:
+            raise HTTPException(400, f"Invalid delivery_type '{body.delivery_type}'")
+    if body.notes is not None:
+        inv.notes = body.notes
+
+    if body.items is not None:
+        for old_item in list(inv.items):
+            db.delete(old_item)
+        db.flush()
+
+        line_items = []
+        total_amount = 0
+        for item in body.items:
+            product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
+            if not product:
+                raise HTTPException(404, f"Product {item.product_id} not found")
+            if not product.is_active:
+                raise HTTPException(400, f"Product '{product.product_name}' is deactivated and cannot be used")
+
+            latest_cost = (
+                db.query(models.CostPrice)
+                .filter(models.CostPrice.product_id == product.id)
+                .order_by(models.CostPrice.effective_date.desc())
+                .first()
+            )
+            cost_price = int(latest_cost.cost_price) if latest_cost else 0
+            unit_price = int(item.unit_price)
+            quantity = float(item.quantity)
+            line_total = int(round(unit_price * quantity))
+            total_amount += line_total
+
+            line_items.append(
+                models.InvoiceItem(
+                    invoice_id=inv.id,
+                    product_id=product.id,
+                    quantity=quantity,
+                    uom=item.uom or product.unit_of_measure,
+                    cost_price=cost_price,
+                    supply_markup_pct=0,
+                    supply_markup_amount=0,
+                    delivery_markup_pct=0,
+                    delivery_markup_amount=0,
+                    payment_term_markup_pct=0,
+                    payment_term_markup_amount=0,
+                    unit_price=unit_price,
+                    line_total=line_total,
+                )
+            )
+
+        apply_handling = body.apply_handling_charge if body.apply_handling_charge is not None else inv.handling_charge_enabled
+        handling_charge_amount = int(round(total_amount * 5 / 100)) if apply_handling else 0
+        inv.items = line_items
+        inv.handling_charge_enabled = apply_handling
+        inv.handling_charge_amount = handling_charge_amount
+        inv.total_amount = total_amount + handling_charge_amount
+    elif body.apply_handling_charge is not None:
+        subtotal = sum(i.line_total for i in inv.items)
+        handling_charge_amount = int(round(subtotal * 5 / 100)) if body.apply_handling_charge else 0
+        inv.handling_charge_enabled = body.apply_handling_charge
+        inv.handling_charge_amount = handling_charge_amount
+        inv.total_amount = subtotal + handling_charge_amount
+
+    audit.log(
+        db,
+        models.AuditAction.update,
+        models.AuditEntity.invoice,
+        inv.id,
+        current_user.id,
+        description=f"Updated invoice {inv.invoice_number}",
+    )
+    db.commit()
+    db.refresh(inv)
+    return inv
+
+
 def get_invoice(db: Session, invoice_id: int) -> models.Invoice:
     inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not inv:

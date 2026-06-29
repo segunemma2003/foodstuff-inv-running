@@ -65,12 +65,12 @@ def update_customer(
 
 
 @router.delete("/{customer_id}", response_model=schemas.MessageResponse)
-def deactivate_customer(
+def delete_customer(
     customer_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin),
 ):
-    return customer_service.deactivate_customer(db, customer_id, current_user)
+    return customer_service.delete_customer(db, customer_id, current_user)
 
 
 @router.get("/{customer_id}/quotations", response_model=List[schemas.QuotationOut])

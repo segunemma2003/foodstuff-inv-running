@@ -40,7 +40,6 @@ def _calc_and_build_items(
     delivery_type: str,
     payment_term: str,
     db: Session,
-    apply_markup_17: bool = False,
 ) -> tuple[List[models.QuotationItem], int]:
     rules = get_active_rules(db)
     built, total = [], 0
@@ -60,7 +59,7 @@ def _calc_and_build_items(
                 f"No active cost price for product '{name}' (id={it.product_id}). "
                 "Upload a cost price first.",
             )
-        pricing = calculate_item_price(cost, delivery_type, payment_term, rules, apply_markup_17=apply_markup_17)
+        pricing = calculate_item_price(cost, delivery_type, payment_term, rules)
         qty = Decimal(str(it.quantity))
 
         base_price = it.unit_price_override if it.unit_price_override is not None else pricing["unit_price"]
@@ -157,7 +156,6 @@ def _build_invoice_from_quotation(
         handling_charge_amount=quotation.handling_charge_amount or 0,
         vat_enabled=quotation.vat_enabled if quotation.vat_enabled is not None else False,
         vat_amount=quotation.vat_amount or 0,
-        markup_17_enabled=quotation.markup_17_enabled if quotation.markup_17_enabled is not None else False,
         total_amount=quotation.total_amount,
         notes=quotation.notes,
         created_by=actor_user.id,
@@ -261,8 +259,7 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
     if not body.items:
         raise HTTPException(400, "Quotation must have at least one item")
 
-    apply_markup_17 = getattr(body, "apply_markup_17", False)
-    items, subtotal = _calc_and_build_items(body.items, body.delivery_type, body.payment_term, db, apply_markup_17=apply_markup_17)
+    items, subtotal = _calc_and_build_items(body.items, body.delivery_type, body.payment_term, db)
     delivery_fee = int(body.delivery_fee or 0)
     items_total = subtotal + delivery_fee
     apply_handling = getattr(body, "apply_handling_charge", True)
@@ -282,7 +279,6 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
         handling_charge_amount=handling_charge_amount,
         vat_enabled=apply_vat,
         vat_amount=vat_amount,
-        markup_17_enabled=apply_markup_17,
         total_amount=total,
         created_by=current_user.id,
         status=models.QuotationStatus.draft,
