@@ -498,7 +498,7 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
 
             db.add(models.CostPrice(
                 product_id=product.id,
-                cost_price=parsed_price,
+                cost_price=int(round(parsed_price * 100)),  # naira → kobo
                 effective_date=date_type.today(),
                 notes=None,
                 created_by=user_id,
@@ -511,7 +511,7 @@ def process_cost_price_bulk_task(self, s3_key: str, user_id: int):
             for new_product, price in pending_new:
                 db.add(models.CostPrice(
                     product_id=new_product.id,
-                    cost_price=price,
+                    cost_price=int(round(price * 100)),  # naira → kobo
                     effective_date=date_type.today(),
                     notes=None,
                     created_by=user_id,
