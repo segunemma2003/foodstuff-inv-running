@@ -139,8 +139,8 @@ def sales_analytics(
     total_quotation_count = quotation_count_query.scalar() or 0
 
     conversion_rate = (total_invoice_count / total_quotation_count * 100) if total_quotation_count else 0
-    total_sales_naira = float(total_sales_value or 0) / 100
-    average_invoice_value = (total_sales_naira / total_invoice_count) if total_invoice_count else 0
+    total_sales_kobo = float(total_sales_value or 0)
+    average_invoice_value = (total_sales_kobo / total_invoice_count) if total_invoice_count else 0
 
     top_customers_rows = (
         db.query(
@@ -270,7 +270,7 @@ def sales_analytics(
     )
 
     return schemas.SalesAnalytics(
-        total_sales_value=total_sales_naira,
+        total_sales_value=total_sales_kobo,
         total_invoices=total_invoice_count,
         total_quotations=total_quotation_count,
         quotation_conversion_rate=round(conversion_rate, 2),
@@ -279,7 +279,7 @@ def sales_analytics(
             {
                 "customer_id": customer_row.id,
                 "customer_name": customer_row.customer_name,
-                "total": float(customer_row.total or 0) / 100,
+                "total": float(customer_row.total or 0),
             }
             for customer_row in top_customers_rows
         ],
@@ -287,7 +287,7 @@ def sales_analytics(
             {
                 "product_id": product_row.id,
                 "product_name": product_row.product_name,
-                "total": float(product_row.total or 0) / 100,
+                "total": float(product_row.total or 0),
                 "qty": float(product_row.qty or 0),
             }
             for product_row in top_products_rows
@@ -298,7 +298,7 @@ def sales_analytics(
                 "category_name": market_row.name,
                 "market_id": market_row.id,
                 "market_name": market_row.name,
-                "total": float(market_row.total or 0) / 100,
+                "total": float(market_row.total or 0),
             }
             for market_row in top_markets_rows
         ],
@@ -308,7 +308,7 @@ def sales_analytics(
                 "category_name": market_row.name,
                 "market_id": market_row.id,
                 "market_name": market_row.name,
-                "total": float(market_row.total or 0) / 100,
+                "total": float(market_row.total or 0),
             }
             for market_row in top_markets_rows
         ],
@@ -317,7 +317,7 @@ def sales_analytics(
                 _enum_or_str_value(delivery_row.delivery_type)
                 if delivery_row.delivery_type is not None
                 else "unknown"
-            ): float(delivery_row.total_amount or 0) / 100
+            ): float(delivery_row.total_amount or 0)
             for delivery_row in delivery_split_rows
         },
         sales_by_payment_term={
@@ -325,14 +325,14 @@ def sales_analytics(
                 str(payment_term_row.payment_term)
                 if payment_term_row.payment_term is not None
                 else "unknown"
-            ): float(payment_term_row.total_amount or 0) / 100
+            ): float(payment_term_row.total_amount or 0)
             for payment_term_row in payment_term_split_rows
         },
         sales_by_staff=[
             {
                 "user_id": staff_row.id,
                 "full_name": staff_row.full_name,
-                "total_sales": float(staff_row.total or 0) / 100,
+                "total_sales": float(staff_row.total or 0),
                 "invoice_count": int(staff_row.count or 0),
             }
             for staff_row in staff_sales_rows
@@ -340,7 +340,7 @@ def sales_analytics(
         daily_trend=[
             {
                 "date": str(daily_row.invoice_date),
-                "total": float(daily_row.total or 0) / 100,
+                "total": float(daily_row.total or 0),
                 "count": int(daily_row.count or 0),
             }
             for daily_row in daily_trend_rows
@@ -349,7 +349,7 @@ def sales_analytics(
             {
                 "year": int(monthly_row.year),
                 "month": int(monthly_row.month),
-                "total": float(monthly_row.total or 0) / 100,
+                "total": float(monthly_row.total or 0),
                 "count": int(monthly_row.count or 0),
             }
             for monthly_row in monthly_trend_rows
@@ -425,7 +425,7 @@ def customer_behavior(
                 "product_id": product_row.product_id,
                 "product_name": product_row.product_name,
                 "qty": float(product_row.qty),
-                "value": float(product_row.value or 0) / 100,
+                "value": float(product_row.value or 0),
             }
         )
     for customer_id_key in top_prod_by_cust:
@@ -438,7 +438,7 @@ def customer_behavior(
         if not invoices:
             continue
 
-        total_value = sum(float(inv.total_amount or 0) / 100 for inv in invoices)
+        total_value = sum(float(inv.total_amount or 0) for inv in invoices)
         dates = sorted(inv.invoice_date for inv in invoices)
         last_date = dates[-1]
         is_inactive = last_date < cutoff
@@ -448,9 +448,9 @@ def customer_behavior(
             gaps = [(dates[i + 1] - dates[i]).days for i in range(len(dates) - 1)]
             freq = sum(gaps) / len(gaps)
 
-        this_month_val = sum(float(inv.total_amount or 0) / 100 for inv in invoices if inv.invoice_date >= this_month_start)
+        this_month_val = sum(float(inv.total_amount or 0) for inv in invoices if inv.invoice_date >= this_month_start)
         last_month_val = sum(
-            float(inv.total_amount or 0) / 100
+            float(inv.total_amount or 0)
             for inv in invoices
             if last_month_start <= inv.invoice_date <= last_month_end
         )
@@ -522,7 +522,7 @@ def product_sales_analytics(
             "product_id": product_row.id,
             "product_name": product_row.product_name,
             "total_qty": float(product_row.total_qty),
-            "total_revenue": float(product_row.total_revenue or 0) / 100,
+            "total_revenue": float(product_row.total_revenue or 0),
             "unique_customers": product_row.unique_customers,
             "total_invoices": product_row.total_invoices,
         }
@@ -566,7 +566,7 @@ def staff_performance(
             inv_data_q = inv_data_q.filter(models.Invoice.id.in_(market_invoice_ids))
         inv_data = inv_data_q.first()
         inv_count = inv_data.cnt or 0
-        inv_total = float(inv_data.total or 0) / 100
+        inv_total = float(inv_data.total or 0)
         conversion = (inv_count / quot_count * 100) if quot_count else 0
 
         results.append(
@@ -613,7 +613,7 @@ def comprehensive_stats(
     for quotation_status_row in quot_status_rows:
         quotation_stats_by_status[quotation_status_row.status.value] = {
             "cnt": quotation_status_row.cnt,
-            "total_amount": float(quotation_status_row.total_amount or 0) / 100,
+            "total_amount": float(quotation_status_row.total_amount or 0),
         }
 
     q_total = sum(status_stats["cnt"] for status_stats in quotation_stats_by_status.values())
@@ -665,8 +665,8 @@ def comprehensive_stats(
     for invoice_status_row in inv_status_rows:
         invoice_stats_by_status[invoice_status_row.status.value] = {
             "cnt": invoice_status_row.cnt,
-            "billed": float(invoice_status_row.billed or 0) / 100,
-            "collected": float(invoice_status_row.collected or 0) / 100,
+            "billed": float(invoice_status_row.billed or 0),
+            "collected": float(invoice_status_row.collected or 0),
         }
 
     i_total = sum(status_stats["cnt"] for status_stats in invoice_stats_by_status.values())
@@ -715,7 +715,7 @@ def comprehensive_stats(
         pay_rows = pay_rows.filter(models.Invoice.id.in_(market_invoice_ids))
     pay_rows = pay_rows.group_by(models.Payment.status).all()
     payment_stats_by_status: dict = {
-        payment_row.status.value: {"cnt": payment_row.cnt, "total": float(payment_row.total or 0) / 100}
+        payment_row.status.value: {"cnt": payment_row.cnt, "total": float(payment_row.total or 0)}
         for payment_row in pay_rows
     }
     pay_stats = schemas.PaymentStats(
@@ -767,8 +767,8 @@ def comprehensive_stats(
     for invoice_summary_row in ui_all:
         invoice_amounts_by_user[invoice_summary_row.created_by][invoice_summary_row.status.value] = {
             "cnt": invoice_summary_row.cnt,
-            "billed": float(invoice_summary_row.billed or 0) / 100,
-            "collected": float(invoice_summary_row.collected or 0) / 100,
+            "billed": float(invoice_summary_row.billed or 0),
+            "collected": float(invoice_summary_row.collected or 0),
         }
 
     by_sales: list = []
@@ -865,7 +865,7 @@ def comprehensive_stats(
             }
         manager_stats_map[manager_status_row.id]["statuses"][manager_status_row.status.value] = {
             "cnt": manager_status_row.cnt,
-            "total_amount": float(manager_status_row.total_amount or 0) / 100,
+            "total_amount": float(manager_status_row.total_amount or 0),
         }
 
     top_sales_rows = (
@@ -895,7 +895,7 @@ def comprehensive_stats(
             {
                 "name": top_sales_row.full_name,
                 "count": top_sales_row.cnt,
-                "value": float(top_sales_row.total_amount or 0) / 100,
+                "value": float(top_sales_row.total_amount or 0),
             }
         )
 
@@ -940,7 +940,7 @@ def comprehensive_stats(
     if market_invoice_ids is not None:
         revenue_by_role_query = revenue_by_role_query.filter(models.Invoice.id.in_(market_invoice_ids))
     role_rows = revenue_by_role_query.group_by(models.User.role).all()
-    revenue_by_role = {role_row.role.value: float(role_row.total or 0) / 100 for role_row in role_rows}
+    revenue_by_role = {role_row.role.value: float(role_row.total or 0) for role_row in role_rows}
 
     top_customers_query = (
         db.query(
@@ -1003,9 +1003,9 @@ def comprehensive_stats(
                 "customer_id": customer_row.id,
                 "customer_name": customer_row.customer_name,
                 "orders": customer_row.orders,
-                "billed": float(customer_row.billed or 0) / 100,
-                "collected": float(customer_row.collected or 0) / 100,
-                "outstanding": (float(customer_row.billed or 0) - float(customer_row.collected or 0)) / 100,
+                "billed": float(customer_row.billed or 0),
+                "collected": float(customer_row.collected or 0),
+                "outstanding": float(customer_row.billed or 0) - float(customer_row.collected or 0),
                 "collection_rate": (
                     round(float(customer_row.collected or 0) / float(customer_row.billed) * 100, 1)
                     if customer_row.billed
@@ -1019,7 +1019,7 @@ def comprehensive_stats(
                 "product_id": product_row.id,
                 "product_name": product_row.product_name,
                 "qty": float(product_row.qty),
-                "revenue": float(product_row.revenue or 0) / 100,
+                "revenue": float(product_row.revenue or 0),
                 "customers": product_row.customers,
             }
             for product_row in top_prod_rows

@@ -652,9 +652,9 @@ def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "", cost_o
     margin_pct = f"{float(summary.get('gross_margin_pct', 0)):.2f}%"
     summary_table = Table(
         [
-            [Paragraph("<b>Total Cost</b>", styles["Normal"]), Paragraph(_fc_naira(summary.get("total_cost", 0)), styles["Right"])],
-            [Paragraph("Total Revenue", styles["Normal"]), Paragraph(_fc_naira(summary.get("total_revenue", 0)), styles["Right"])],
-            [Paragraph("Gross Profit", styles["Normal"]), Paragraph(_fc_naira(summary.get("gross_profit", 0)), styles["Right"])],
+            [Paragraph("<b>Total Cost</b>", styles["Normal"]), Paragraph(_fc_naira(summary.get("total_cost", 0) / 100), styles["Right"])],
+            [Paragraph("Total Revenue", styles["Normal"]), Paragraph(_fc_naira(summary.get("total_revenue", 0) / 100), styles["Right"])],
+            [Paragraph("Gross Profit", styles["Normal"]), Paragraph(_fc_naira(summary.get("gross_profit", 0) / 100), styles["Right"])],
             [Paragraph("Gross Margin", styles["Normal"]), Paragraph(margin_pct, styles["Right"])],
         ],
         colWidths=[7 * cm, 11 * cm],
@@ -677,14 +677,14 @@ def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "", cost_o
         ]]
         for row in by_product:
             qty = float(row.get("qty", 0) or 0)
-            unit_cost = float(row.get("unit_cost_price", 0) or 0)
+            unit_cost = float(row.get("unit_cost_price", 0) or 0) / 100
             if unit_cost == 0 and qty > 0:
-                unit_cost = float(row.get("cost", 0) or 0) / qty
+                unit_cost = float(row.get("cost", 0) or 0) / 100 / qty
             rows.append([
                 Paragraph(str(row.get("product_name", "")), styles["Normal"]),
                 Paragraph(f"{qty:.0f}", styles["Right"]),
                 Paragraph(_fc_naira(unit_cost), styles["Right"]),
-                Paragraph(_fc_naira(float(row.get("cost", 0))), styles["Right"]),
+                Paragraph(_fc_naira(float(row.get("cost", 0)) / 100), styles["Right"]),
             ])
         col_widths = [8.0 * cm, 2.0 * cm, 4.0 * cm, 4.0 * cm]
     else:
@@ -702,9 +702,9 @@ def generate_cost_of_sales_pdf(report_data: dict, title_suffix: str = "", cost_o
                 Paragraph(str(row.get("invoice_number", "")), styles["Normal"]),
                 Paragraph(str(row.get("invoice_date", "")), styles["Normal"]),
                 Paragraph(str(row.get("customer_name", "")), styles["Normal"]),
-                Paragraph(_fc_naira(float(row.get("cost", 0))), styles["Right"]),
-                Paragraph(_fc_naira(float(row.get("revenue", 0))), styles["Right"]),
-                Paragraph(_fc_naira(float(row.get("gross_profit", 0))), styles["Right"]),
+                Paragraph(_fc_naira(float(row.get("cost", 0)) / 100), styles["Right"]),
+                Paragraph(_fc_naira(float(row.get("revenue", 0)) / 100), styles["Right"]),
+                Paragraph(_fc_naira(float(row.get("gross_profit", 0)) / 100), styles["Right"]),
                 Paragraph(f"{float(row.get('margin_pct', 0)):.2f}%", styles["Right"]),
             ])
         col_widths = [2.6 * cm, 2.2 * cm, 3.4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm, 2.6 * cm]
