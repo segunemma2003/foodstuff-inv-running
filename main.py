@@ -72,8 +72,9 @@ def seed_defaults(db: Session):
         if r.payment_term_code
     }
     default_pt_rules = [
-        ("Net 15 Markup", "net_15", 2.5),
+        ("Net 15 Markup", "net_15", 1.75),
         ("Net 30 Markup", "net_30", 3.5),
+        ("Net 45 Markup", "net_45", 5.25),
         ("Net 60 Markup", "net_60", 5.0),
         ("Net 90 Markup", "net_90", 7.0),
     ]

@@ -64,8 +64,8 @@ def _calc_and_build_items(
 
         base_price = it.unit_price_override if it.unit_price_override is not None else pricing["unit_price"]
         discount_pct = Decimal(str(it.discount_pct or 0))
-        unit_price = math.ceil(float(base_price) * (1 - float(discount_pct) / 100) / 100) * 100
-        line_total = math.ceil(float(qty) * unit_price / 100) * 100
+        unit_price = int(round(float(base_price) * (1 - float(discount_pct) / 100)))
+        line_total = int(round(float(qty) * unit_price))
         total += line_total
 
         uom = it.uom
@@ -156,6 +156,7 @@ def _build_invoice_from_quotation(
         handling_charge_amount=quotation.handling_charge_amount or 0,
         vat_enabled=quotation.vat_enabled if quotation.vat_enabled is not None else False,
         vat_amount=quotation.vat_amount or 0,
+        wht_enabled=quotation.wht_enabled if quotation.wht_enabled is not None else False,
         total_amount=quotation.total_amount,
         notes=quotation.notes,
         created_by=actor_user.id,
@@ -264,6 +265,7 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
     items_total = subtotal + delivery_fee
     apply_handling = getattr(body, "apply_handling_charge", True)
     apply_vat = getattr(body, "apply_vat", False)
+    apply_wht = getattr(body, "apply_wht", False)
     handling_charge_amount = int(round(items_total * 5 / 100)) if apply_handling else 0
     vat_amount = int(round(items_total * 75 / 1000)) if apply_vat else 0
     total = items_total + handling_charge_amount + vat_amount
@@ -279,6 +281,7 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
         handling_charge_amount=handling_charge_amount,
         vat_enabled=apply_vat,
         vat_amount=vat_amount,
+        wht_enabled=apply_wht,
         total_amount=total,
         created_by=current_user.id,
         status=models.QuotationStatus.draft,
@@ -372,8 +375,11 @@ def update_quotation(
     quotation = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
     if not quotation:
         raise HTTPException(404, "Quotation not found")
+    if quotation.status == models.QuotationStatus.converted:
+        raise HTTPException(400, "Converted quotations cannot be edited")
     if quotation.status != models.QuotationStatus.draft:
-        raise HTTPException(400, f"Only draft quotations can be edited (current: {quotation.status.value})")
+        if current_user.role != models.UserRole.admin:
+            raise HTTPException(400, f"Only admin can edit non-draft quotations (current: {quotation.status.value})")
 
     if body.delivery_type:
         quotation.delivery_type = body.delivery_type

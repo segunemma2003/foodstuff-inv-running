@@ -242,7 +242,10 @@ def _date_row(c1_lbl: str, c1_val: str,
     return t
 
 
-def _items_table(items: list, styles, plain_whole_naira: bool = False) -> Table:
+WHT_RATE = Decimal("0.054")  # 5.4%
+
+
+def _items_table(items: list, styles, plain_whole_naira: bool = False, wht_enabled: bool = False) -> Table:
     header = [
         Paragraph("PRODUCT NAME", styles["TableHdr"]),
         Paragraph("QTY",         styles["TableHdrR"]),
@@ -250,21 +253,31 @@ def _items_table(items: list, styles, plain_whole_naira: bool = False) -> Table:
         Paragraph("UNIT PRICE",  styles["TableHdrR"]),
         Paragraph("AMOUNT",      styles["TableHdrR"]),
     ]
+    if wht_enabled:
+        header.append(Paragraph("WHT (5.4%)", styles["TableHdrR"]))
     rows = [header]
     for item in items:
         name = item.product.product_name if item.product else str(item.product_id)
         uom  = getattr(item, "uom", None) or "—"
         unit_price = _fmt_whole_plain(item.unit_price) if plain_whole_naira else _fmt(item.unit_price)
         line_total = _fmt_whole_plain(item.line_total) if plain_whole_naira else _fmt(item.line_total)
-        rows.append([
+        row = [
             Paragraph(name,                    styles["Normal"]),
             Paragraph(_fmt_qty(item.quantity), styles["Right"]),
             Paragraph(uom,                     styles["Normal"]),
             Paragraph(unit_price,              styles["Right"]),
             Paragraph(line_total,              styles["Right"]),
-        ])
+        ]
+        if wht_enabled:
+            wht_amount = int(round(float(item.line_total) * float(WHT_RATE)))
+            wht_str = _fmt_whole_plain(wht_amount) if plain_whole_naira else _fmt(wht_amount)
+            row.append(Paragraph(wht_str, styles["Right"]))
+        rows.append(row)
 
-    col_widths = [7.5 * cm, 1.5 * cm, 2 * cm, 3.5 * cm, 3.5 * cm]
+    if wht_enabled:
+        col_widths = [5.5 * cm, 1.5 * cm, 1.8 * cm, 2.8 * cm, 2.9 * cm, 2.5 * cm]
+    else:
+        col_widths = [7.5 * cm, 1.5 * cm, 2 * cm, 3.5 * cm, 3.5 * cm]
     t = Table(rows, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         ("FONTSIZE",      (0, 0), (-1, -1), 9),
@@ -438,7 +451,8 @@ def generate_quotation_pdf(quotation: models.Quotation, bank_accounts: list = No
         styles,
     ))
     story.append(Spacer(1, 0.4 * cm))
-    story.append(_items_table(quotation.items, styles))
+    wht_on = getattr(quotation, "wht_enabled", False)
+    story.append(_items_table(quotation.items, styles, wht_enabled=wht_on))
     story.append(Spacer(1, 0.2 * cm))
     story += _totals_section(
         quotation.total_amount,
@@ -497,7 +511,8 @@ def generate_invoice_pdf(
         styles,
     ))
     story.append(Spacer(1, 0.4 * cm))
-    story.append(_items_table(invoice.items, styles, plain_whole_naira=True))
+    wht_on = getattr(invoice, "wht_enabled", False)
+    story.append(_items_table(invoice.items, styles, plain_whole_naira=True, wht_enabled=wht_on))
     story.append(Spacer(1, 0.2 * cm))
     story += _totals_section(
         invoice.total_amount,

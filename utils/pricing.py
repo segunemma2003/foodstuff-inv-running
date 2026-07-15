@@ -104,7 +104,7 @@ def calculate_item_price(
         pt_amount = _round(cost_price * pt_pct)
 
     base_unit = int(cost_price) + supply_amount + delivery_amount + pt_amount
-    unit_price = math.ceil(base_unit / 100) * 100
+    unit_price = base_unit  # exact kobo — no artificial ceiling
 
     return {
         "supply_markup_pct": float(supply_pct * 100),

@@ -327,6 +327,7 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
         notes=body.notes,
         handling_charge_enabled=body.apply_handling_charge,
         handling_charge_amount=handling_charge_amount,
+        wht_enabled=getattr(body, "apply_wht", False),
         total_amount=grand_total,
         amount_paid=0,
         created_by=current_user.id,
