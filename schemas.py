@@ -124,7 +124,7 @@ class MarketOut(CategoryOut):
 class CustomerCreate(BaseModel):
     customer_name: str
     business_name: Optional[str] = None
-    phone: Optional[str] = None
+    phone: str
     email: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
