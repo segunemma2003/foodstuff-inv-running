@@ -1,7 +1,9 @@
+import csv
+import io
 from typing import List, Optional
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -120,6 +122,82 @@ def customer_top_products(
     return customer_service.customer_top_products(
         db, customer_id, limit=limit, date_from=date_from, date_to=date_to
     )
+
+
+@router.post("/bulk-update")
+def bulk_update_customers(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_customer_manage_roles),
+):
+    """
+    Accept a CSV with columns matching customer fields.
+    Each row is matched by: email → phone → customer_name (in that priority order).
+    Only non-empty CSV cells overwrite existing values.
+    Returns counts of updated / not_found / skipped rows.
+    """
+    UPDATABLE = {"customer_name", "business_name", "phone", "email", "address", "city", "category", "default_delivery", "default_payment_term"}
+
+    content = file.file.read().decode("utf-8-sig")  # utf-8-sig strips BOM from Excel-exported CSVs
+    reader = csv.DictReader(io.StringIO(content))
+
+    updated = 0
+    not_found = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for i, row in enumerate(reader, start=2):  # row 1 is header
+        email = (row.get("email") or "").strip()
+        phone = (row.get("phone") or "").strip()
+        name = (row.get("customer_name") or "").strip()
+
+        customer = None
+        if email:
+            customer = db.query(models.Customer).filter(
+                models.Customer.email == email
+            ).first()
+        if not customer and phone:
+            customer = db.query(models.Customer).filter(
+                models.Customer.phone == phone
+            ).first()
+        if not customer and name:
+            customer = db.query(models.Customer).filter(
+                models.Customer.customer_name.ilike(name)
+            ).first()
+
+        if not customer:
+            not_found += 1
+            errors.append(f"Row {i}: no match for email={email!r} phone={phone!r} name={name!r}")
+            continue
+
+        changes = {}
+        for col in UPDATABLE:
+            val = (row.get(col) or "").strip()
+            if val:
+                changes[col] = val
+
+        if not changes:
+            skipped += 1
+            continue
+
+        old = {k: str(getattr(customer, k)) for k in changes}
+        for field, value in changes.items():
+            setattr(customer, field, value)
+        from utils import audit
+        audit.log(
+            db,
+            models.AuditAction.update,
+            models.AuditEntity.customer,
+            customer.id,
+            current_user.id,
+            old_values=old,
+            new_values=changes,
+            description=f"Bulk CSV update",
+        )
+        updated += 1
+
+    db.commit()
+    return {"updated": updated, "not_found": not_found, "skipped": skipped, "errors": errors[:20]}
 
 
 @router.get("/{customer_id}/cost-of-sales")
