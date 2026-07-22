@@ -77,6 +77,10 @@ def seed_defaults(db: Session):
         ("Net 45 Markup", "net_45", 5.25),
         ("Net 60 Markup", "net_60", 5.0),
         ("Net 90 Markup", "net_90", 7.0),
+        ("Immediate / Pay Now Markup", "immediate", 1.75),
+        ("Net 3 Day Markup", "net_3", 1.75),
+        ("Net 5 Day Markup", "net_5", 1.75),
+        ("Net 7 Day Markup", "net_7", 1.75),
     ]
     for rule_name, code, pct in default_pt_rules:
         if code not in existing_pt_codes:
