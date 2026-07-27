@@ -180,6 +180,12 @@ def bulk_update_customers(
             skipped += 1
             continue
 
+        from utils.locations import normalize_city, normalize_category
+        if "city" in changes:
+            changes["city"] = normalize_city(changes["city"]) or changes["city"]
+        if "category" in changes:
+            changes["category"] = normalize_category(changes["category"]) or changes["category"]
+
         old = {k: str(getattr(customer, k)) for k in changes}
         for field, value in changes.items():
             setattr(customer, field, value)

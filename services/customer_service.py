@@ -76,7 +76,14 @@ def list_customers(
 
 
 def create_customer(db: Session, body: schemas.CustomerCreate, current_user: models.User) -> models.Customer:
-    customer = models.Customer(**body.model_dump())
+    from utils.locations import normalize_city, normalize_category
+
+    payload = body.model_dump()
+    if payload.get("city") is not None:
+        payload["city"] = normalize_city(payload["city"])
+    if payload.get("category") is not None:
+        payload["category"] = normalize_category(payload["category"])
+    customer = models.Customer(**payload)
     db.add(customer)
     db.flush()
     audit.log(
@@ -102,12 +109,20 @@ def get_customer(db: Session, customer_id: int) -> models.Customer:
 def update_customer(
     db: Session, customer_id: int, body: schemas.CustomerUpdate, current_user: models.User
 ) -> models.Customer:
+    from utils.locations import normalize_city, normalize_category
+
     c = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
     if not c:
         raise HTTPException(404, "Customer not found")
 
-    old = {k: str(getattr(c, k)) for k in body.model_dump(exclude_none=True)}
-    for field, value in body.model_dump(exclude_none=True).items():
+    updates = body.model_dump(exclude_none=True)
+    if "city" in updates:
+        updates["city"] = normalize_city(updates["city"])
+    if "category" in updates:
+        updates["category"] = normalize_category(updates["category"])
+
+    old = {k: str(getattr(c, k)) for k in updates}
+    for field, value in updates.items():
         setattr(c, field, value)
     audit.log(
         db,
@@ -116,7 +131,7 @@ def update_customer(
         c.id,
         current_user.id,
         old_values=old,
-        new_values=body.model_dump(exclude_none=True),
+        new_values=updates,
     )
     db.commit()
     db.refresh(c)
