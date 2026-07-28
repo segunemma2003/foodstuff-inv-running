@@ -371,6 +371,8 @@ def update_invoice(db: Session, invoice_id: int, body: schemas.InvoiceUpdate, cu
             raise HTTPException(400, f"Invalid delivery_type '{body.delivery_type}'")
     if body.notes is not None:
         inv.notes = body.notes
+    if body.apply_wht is not None:
+        inv.wht_enabled = bool(body.apply_wht)
 
     if body.items is not None:
         for old_item in list(inv.items):

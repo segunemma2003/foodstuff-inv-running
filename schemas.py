@@ -337,6 +337,7 @@ class QuotationUpdate(BaseModel):
     delivery_type: Optional[DeliveryType] = None
     payment_term: Optional[str] = None
     notes: Optional[str] = None
+    apply_wht: Optional[bool] = None
     items: Optional[List[QuotationItemCreate]] = None
 
 
@@ -477,6 +478,7 @@ class InvoiceUpdate(BaseModel):
     delivery_type: Optional[str] = None
     notes: Optional[str] = None
     apply_handling_charge: Optional[bool] = None
+    apply_wht: Optional[bool] = None
     items: Optional[List[InvoiceItemCreate]] = None
 
 

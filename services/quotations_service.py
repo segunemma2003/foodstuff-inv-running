@@ -387,6 +387,8 @@ def update_quotation(
         quotation.payment_term = body.payment_term
     if body.notes is not None:
         quotation.notes = body.notes
+    if body.apply_wht is not None:
+        quotation.wht_enabled = bool(body.apply_wht)
 
     if body.items is not None:
         for item in quotation.items:
