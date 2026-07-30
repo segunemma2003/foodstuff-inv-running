@@ -498,6 +498,7 @@ class InvoiceItemOut(BaseModel):
     delivery_markup_amount: int      # kobo
     payment_term_markup_pct: Decimal
     payment_term_markup_amount: int  # kobo
+    discount_pct: Decimal = Decimal("0")
     unit_price: int                  # kobo
     line_total: int                  # kobo
 

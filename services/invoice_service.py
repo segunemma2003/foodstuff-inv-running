@@ -308,6 +308,7 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
                 delivery_markup_amount=0,
                 payment_term_markup_pct=0,
                 payment_term_markup_amount=0,
+                discount_pct=0,
                 unit_price=unit_price,
                 line_total=line_total,
             )
@@ -413,6 +414,7 @@ def update_invoice(db: Session, invoice_id: int, body: schemas.InvoiceUpdate, cu
                     delivery_markup_amount=0,
                     payment_term_markup_pct=0,
                     payment_term_markup_amount=0,
+                    discount_pct=0,
                     unit_price=unit_price,
                     line_total=line_total,
                 )

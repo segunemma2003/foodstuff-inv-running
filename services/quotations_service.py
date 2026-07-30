@@ -179,6 +179,7 @@ def _build_invoice_from_quotation(
                 delivery_markup_amount=qi.delivery_markup_amount,
                 payment_term_markup_pct=qi.payment_term_markup_pct,
                 payment_term_markup_amount=qi.payment_term_markup_amount,
+                discount_pct=qi.discount_pct or 0,
                 unit_price=qi.unit_price,
                 line_total=qi.line_total,
             )

@@ -145,6 +145,9 @@ def run_migrations():
                 "ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS discount_pct NUMERIC(6,3) NOT NULL DEFAULT 0"
             ))
             conn.execute(text(
+                "ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS discount_pct NUMERIC(6,3) NOT NULL DEFAULT 0"
+            ))
+            conn.execute(text(
                 "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS handling_charge_enabled BOOLEAN NOT NULL DEFAULT TRUE"
             ))
             conn.execute(text(

@@ -324,6 +324,7 @@ class InvoiceItem(Base):
     delivery_markup_amount = Column(BigInteger, default=0)
     payment_term_markup_pct = Column(Numeric(6, 3), default=0)
     payment_term_markup_amount = Column(BigInteger, default=0)
+    discount_pct = Column(Numeric(6, 3), nullable=False, default=0)
     unit_price = Column(BigInteger, nullable=False)
     line_total = Column(BigInteger, nullable=False)
 
