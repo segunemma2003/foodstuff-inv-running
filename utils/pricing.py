@@ -94,12 +94,13 @@ def calculate_item_price(
             delivery_pct = Decimal(str(delivery_rule.markup_percentage)) / 100
             delivery_amount = _round(cost_price * delivery_pct)
 
-    # Payment term markup
+    # Payment term markup ("cash" uses the same rule as immediate when present)
     pt_pct = Decimal("0")
     pt_amount = 0
     pt_rules = rules.get("payment_terms", {})
-    if payment_term in pt_rules:
-        pt_rule = pt_rules[payment_term]
+    pt_key = "immediate" if payment_term == "cash" else payment_term
+    if pt_key in pt_rules:
+        pt_rule = pt_rules[pt_key]
         pt_pct = Decimal(str(pt_rule.markup_percentage)) / 100
         pt_amount = _round(cost_price * pt_pct)
 

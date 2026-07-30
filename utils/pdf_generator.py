@@ -246,13 +246,16 @@ WHT_RATE = Decimal("0.054")  # 5.4%
 
 
 def _items_table(items: list, styles, plain_whole_naira: bool = False, wht_enabled: bool = False) -> Table:
+    show_discount = any(float(getattr(item, "discount_pct", 0) or 0) > 0 for item in items)
     header = [
         Paragraph("PRODUCT NAME", styles["TableHdr"]),
         Paragraph("QTY",         styles["TableHdrR"]),
         Paragraph("U.O.M",       styles["TableHdr"]),
         Paragraph("UNIT PRICE",  styles["TableHdrR"]),
-        Paragraph("AMOUNT",      styles["TableHdrR"]),
     ]
+    if show_discount:
+        header.append(Paragraph("DISC %", styles["TableHdrR"]))
+    header.append(Paragraph("AMOUNT", styles["TableHdrR"]))
     if wht_enabled:
         header.append(Paragraph("WHT (5.4%)", styles["TableHdrR"]))
     rows = [header]
@@ -261,20 +264,28 @@ def _items_table(items: list, styles, plain_whole_naira: bool = False, wht_enabl
         uom  = getattr(item, "uom", None) or "—"
         unit_price = _fmt_whole_plain(item.unit_price) if plain_whole_naira else _fmt(item.unit_price)
         line_total = _fmt_whole_plain(item.line_total) if plain_whole_naira else _fmt(item.line_total)
+        disc = float(getattr(item, "discount_pct", 0) or 0)
         row = [
             Paragraph(name,                    styles["Normal"]),
             Paragraph(_fmt_qty(item.quantity), styles["Right"]),
             Paragraph(uom,                     styles["Normal"]),
             Paragraph(unit_price,              styles["Right"]),
-            Paragraph(line_total,              styles["Right"]),
         ]
+        if show_discount:
+            disc_label = f"{disc:g}%" if disc > 0 else "—"
+            row.append(Paragraph(disc_label, styles["Right"]))
+        row.append(Paragraph(line_total, styles["Right"]))
         if wht_enabled:
             wht_amount = int(round(float(item.line_total) * float(WHT_RATE)))
             wht_str = _fmt_whole_plain(wht_amount) if plain_whole_naira else _fmt(wht_amount)
             row.append(Paragraph(wht_str, styles["Right"]))
         rows.append(row)
 
-    if wht_enabled:
+    if show_discount and wht_enabled:
+        col_widths = [5.0 * cm, 1.3 * cm, 1.5 * cm, 2.4 * cm, 1.5 * cm, 2.5 * cm, 2.3 * cm]
+    elif show_discount:
+        col_widths = [6.5 * cm, 1.5 * cm, 1.8 * cm, 2.8 * cm, 1.8 * cm, 3.1 * cm]
+    elif wht_enabled:
         col_widths = [5.5 * cm, 1.5 * cm, 1.8 * cm, 2.8 * cm, 2.9 * cm, 2.5 * cm]
     else:
         col_widths = [7.5 * cm, 1.5 * cm, 2 * cm, 3.5 * cm, 3.5 * cm]

@@ -390,12 +390,32 @@ def update_quotation(
     if body.apply_wht is not None:
         quotation.wht_enabled = bool(body.apply_wht)
 
-    if body.items is not None:
-        for item in quotation.items:
-            db.delete(item)
+    # Reprice when items change OR when payment term / delivery changes
+    # (quotation payment term always drives item markups).
+    should_reprice = (
+        body.items is not None
+        or body.payment_term is not None
+        or body.delivery_type is not None
+    )
+    if should_reprice:
         delivery = body.delivery_type or quotation.delivery_type
         payment = body.payment_term or quotation.payment_term
-        items, total = _calc_and_build_items(body.items, delivery, payment, db)
+        if body.items is not None:
+            item_specs = body.items
+        else:
+            # Snapshot before delete — keep products/qty/discounts under new term
+            item_specs = [
+                schemas.QuotationItemCreate(
+                    product_id=qi.product_id,
+                    quantity=qi.quantity,
+                    uom=qi.uom,
+                    discount_pct=qi.discount_pct or 0,
+                )
+                for qi in list(quotation.items)
+            ]
+        for item in list(quotation.items):
+            db.delete(item)
+        items, total = _calc_and_build_items(item_specs, delivery, payment, db)
         for item in items:
             item.quotation_id = quotation.id
             db.add(item)
