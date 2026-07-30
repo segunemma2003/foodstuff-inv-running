@@ -181,12 +181,11 @@ def run_migrations():
         """
         UPDATE invoice_items ii
         SET discount_pct = qi.discount_pct
-        FROM invoices i
-        JOIN quotation_items qi
-          ON qi.quotation_id = i.quotation_id
-         AND qi.product_id = ii.product_id
-         AND qi.quantity = ii.quantity
+        FROM invoices i, quotation_items qi
         WHERE ii.invoice_id = i.id
+          AND i.quotation_id = qi.quotation_id
+          AND qi.product_id = ii.product_id
+          AND qi.quantity = ii.quantity
           AND i.quotation_id IS NOT NULL
           AND COALESCE(ii.discount_pct, 0) = 0
           AND COALESCE(qi.discount_pct, 0) > 0
