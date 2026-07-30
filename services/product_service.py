@@ -103,7 +103,7 @@ def enrich_product(
             .first()
         )
     if cp:
-        out.current_cost_price = float(cp.cost_price)
+        out.current_cost_price = int(cp.cost_price)
         out.cost_price_effective_date = cp.effective_date
     out.market_id = product.category_id
     out.market = out.category

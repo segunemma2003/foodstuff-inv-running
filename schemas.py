@@ -221,6 +221,13 @@ class ProductOut(BaseModel):
     current_cost_price: Optional[int] = None  # kobo
     cost_price_effective_date: Optional[date] = None
 
+    @field_validator("current_cost_price", mode="before")
+    @classmethod
+    def _coerce_cost_kobo(cls, v):
+        if v is None or v == "":
+            return None
+        return int(round(float(v)))
+
 
 class ProductListPage(BaseModel):
     """Paginated product list from GET /products."""
