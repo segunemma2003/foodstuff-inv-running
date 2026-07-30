@@ -121,99 +121,77 @@ def run_migrations():
     """Idempotent schema migrations that run on every startup."""
     from sqlalchemy import text
     from database import DATABASE_URL
-    with engine.connect() as conn:
-        if DATABASE_URL.startswith("postgresql"):
-            conn.execute(text(
-                "ALTER TABLE invoices ALTER COLUMN quotation_id DROP NOT NULL"
-            ))
-            conn.execute(text(
-                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS custom_pdf_s3_key VARCHAR(255)"
-            ))
-            conn.execute(text("ALTER TYPE invoicestatus ADD VALUE IF NOT EXISTS 'completed'"))
-            conn.execute(text("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'accountant'"))
-            conn.execute(text("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'operations'"))
-            conn.execute(text(
-                "ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"
-            ))
-            conn.execute(text(
-                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(15,2) DEFAULT 0"
-            ))
-            conn.execute(text(
-                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(15,2) DEFAULT 0"
-            ))
-            conn.execute(text(
-                "ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS discount_pct NUMERIC(6,3) NOT NULL DEFAULT 0"
-            ))
-            conn.execute(text(
-                "ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS discount_pct NUMERIC(6,3) NOT NULL DEFAULT 0"
-            ))
-            # Backfill discount from source quotation lines when still zero
-            conn.execute(text(
-                """
-                UPDATE invoice_items ii
-                SET discount_pct = qi.discount_pct
-                FROM invoices i
-                JOIN quotation_items qi
-                  ON qi.quotation_id = i.quotation_id
-                 AND qi.product_id = ii.product_id
-                 AND qi.quantity = ii.quantity
-                WHERE ii.invoice_id = i.id
-                  AND i.quotation_id IS NOT NULL
-                  AND COALESCE(ii.discount_pct, 0) = 0
-                  AND COALESCE(qi.discount_pct, 0) > 0
-                """
-            ))
-            conn.execute(text(
-                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS handling_charge_enabled BOOLEAN NOT NULL DEFAULT TRUE"
-            ))
-            conn.execute(text(
-                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS handling_charge_amount BIGINT NOT NULL DEFAULT 0"
-            ))
-            conn.execute(text(
-                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS handling_charge_enabled BOOLEAN NOT NULL DEFAULT TRUE"
-            ))
-            conn.execute(text(
-                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS handling_charge_amount BIGINT NOT NULL DEFAULT 0"
-            ))
-            conn.execute(text(
-                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE"
-            ))
-            conn.execute(text(
-                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS vat_amount BIGINT NOT NULL DEFAULT 0"
-            ))
-            conn.execute(text(
-                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE"
-            ))
-            conn.execute(text(
-                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS vat_amount BIGINT NOT NULL DEFAULT 0"
-            ))
-            conn.execute(text(
-                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS markup_17_enabled BOOLEAN NOT NULL DEFAULT FALSE"
-            ))
-            conn.execute(text(
-                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS markup_17_amount BIGINT NOT NULL DEFAULT 0"
-            ))
-            conn.execute(text(
-                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS markup_17_enabled BOOLEAN NOT NULL DEFAULT FALSE"
-            ))
-            conn.execute(text(
-                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS markup_17_amount BIGINT NOT NULL DEFAULT 0"
-            ))
-            conn.execute(text(
-                "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS wht_enabled BOOLEAN NOT NULL DEFAULT FALSE"
-            ))
-            conn.execute(text(
-                "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS wht_enabled BOOLEAN NOT NULL DEFAULT FALSE"
-            ))
-            # Indexes for common list-query sort/filter columns
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices(created_at DESC)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_invoices_customer_id ON invoices(customer_id)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_invoices_invoice_date ON invoices(invoice_date DESC)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_quotations_created_at ON quotations(created_at DESC)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_quotations_status ON quotations(status)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_quotations_customer_id ON quotations(customer_id)"))
-            conn.commit()
+
+    def _exec(sql: str, *, autocommit: bool = False) -> None:
+        """Run one statement; never abort the rest of startup on failure."""
+        try:
+            if autocommit:
+                with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                    conn.execute(text(sql))
+            else:
+                with engine.begin() as conn:
+                    conn.execute(text(sql))
+        except Exception as exc:
+            print(f"[migration] skipped: {sql[:80]}… ({exc})")
+
+    if not DATABASE_URL.startswith("postgresql"):
+        return
+
+    # ENUM adds must be outside a multi-statement transaction on some PG versions
+    _exec("ALTER TYPE invoicestatus ADD VALUE IF NOT EXISTS 'completed'", autocommit=True)
+    _exec("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'accountant'", autocommit=True)
+    _exec("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'operations'", autocommit=True)
+
+    alters = [
+        "ALTER TABLE invoices ALTER COLUMN quotation_id DROP NOT NULL",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS custom_pdf_s3_key VARCHAR(255)",
+        "ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(15,2) DEFAULT 0",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(15,2) DEFAULT 0",
+        "ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS discount_pct NUMERIC(6,3) NOT NULL DEFAULT 0",
+        "ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS discount_pct NUMERIC(6,3) NOT NULL DEFAULT 0",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS handling_charge_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS handling_charge_amount BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS handling_charge_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS handling_charge_amount BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS vat_amount BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS vat_amount BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS markup_17_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS markup_17_amount BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS markup_17_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS markup_17_amount BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS wht_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS wht_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices(created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status)",
+        "CREATE INDEX IF NOT EXISTS idx_invoices_customer_id ON invoices(customer_id)",
+        "CREATE INDEX IF NOT EXISTS idx_invoices_invoice_date ON invoices(invoice_date DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_quotations_created_at ON quotations(created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_quotations_status ON quotations(status)",
+        "CREATE INDEX IF NOT EXISTS idx_quotations_customer_id ON quotations(customer_id)",
+        # Fix seeded payment-term rules with null timestamps (broke /pricing-rules list)
+        "UPDATE pricing_rules SET updated_at = COALESCE(updated_at, created_at, NOW()), created_at = COALESCE(created_at, NOW()) WHERE updated_at IS NULL OR created_at IS NULL",
+    ]
+    for sql in alters:
+        _exec(sql)
+
+    _exec(
+        """
+        UPDATE invoice_items ii
+        SET discount_pct = qi.discount_pct
+        FROM invoices i
+        JOIN quotation_items qi
+          ON qi.quotation_id = i.quotation_id
+         AND qi.product_id = ii.product_id
+         AND qi.quantity = ii.quantity
+        WHERE ii.invoice_id = i.id
+          AND i.quotation_id IS NOT NULL
+          AND COALESCE(ii.discount_pct, 0) = 0
+          AND COALESCE(qi.discount_pct, 0) > 0
+        """
+    )
 
 
 @asynccontextmanager

@@ -307,7 +307,8 @@ class PricingRuleOut(BaseModel):
     effective_date: Optional[date] = None
     created_by: Optional[int] = None
     updated_by: Optional[int] = None
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
 
 
 # ─── Quotations ──────────────────────────────────────────────────────────────
