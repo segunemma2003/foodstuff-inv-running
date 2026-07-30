@@ -147,6 +147,22 @@ def run_migrations():
             conn.execute(text(
                 "ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS discount_pct NUMERIC(6,3) NOT NULL DEFAULT 0"
             ))
+            # Backfill discount from source quotation lines when still zero
+            conn.execute(text(
+                """
+                UPDATE invoice_items ii
+                SET discount_pct = qi.discount_pct
+                FROM invoices i
+                JOIN quotation_items qi
+                  ON qi.quotation_id = i.quotation_id
+                 AND qi.product_id = ii.product_id
+                 AND qi.quantity = ii.quantity
+                WHERE ii.invoice_id = i.id
+                  AND i.quotation_id IS NOT NULL
+                  AND COALESCE(ii.discount_pct, 0) = 0
+                  AND COALESCE(qi.discount_pct, 0) > 0
+                """
+            ))
             conn.execute(text(
                 "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS handling_charge_enabled BOOLEAN NOT NULL DEFAULT TRUE"
             ))
