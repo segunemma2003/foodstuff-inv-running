@@ -358,6 +358,7 @@ class PricePreviewRequest(BaseModel):
     quantity: Decimal
     delivery_type: DeliveryType
     payment_term: str
+    apply_wht: bool = False
 
 
 class PricePreviewResponse(BaseModel):
@@ -371,6 +372,8 @@ class PricePreviewResponse(BaseModel):
     delivery_markup_amount: int      # kobo
     payment_term_markup_pct: float
     payment_term_markup_amount: int  # kobo
+    wht_markup_pct: float = 0.0
+    wht_markup_amount: int = 0       # kobo
     unit_price: int                  # kobo
     line_total: int                  # kobo
 
@@ -463,7 +466,8 @@ class InvoiceItemCreate(BaseModel):
     product_id: int
     quantity: Decimal
     uom: Optional[str] = None
-    unit_price: int      # kobo — selling price (user-provided or from calculate-price)
+    unit_price: Optional[int] = None           # kobo — if omitted, calculated from cost + markups
+    unit_price_override: Optional[int] = None  # alias used by FSS admin proxy
 
 
 class InvoiceCreate(BaseModel):

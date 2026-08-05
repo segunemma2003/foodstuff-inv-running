@@ -242,10 +242,9 @@ def _date_row(c1_lbl: str, c1_val: str,
     return t
 
 
-WHT_RATE = Decimal("0.054")  # 5.4%
-
-
 def _items_table(items: list, styles, plain_whole_naira: bool = False, wht_enabled: bool = False) -> Table:
+    # wht_enabled kept for call-site compat; WHT is baked into unit prices (no separate column).
+    _ = wht_enabled
     header = [
         Paragraph("PRODUCT NAME", styles["TableHdr"]),
         Paragraph("QTY",         styles["TableHdrR"]),
@@ -253,8 +252,6 @@ def _items_table(items: list, styles, plain_whole_naira: bool = False, wht_enabl
         Paragraph("UNIT PRICE",  styles["TableHdrR"]),
         Paragraph("AMOUNT",      styles["TableHdrR"]),
     ]
-    if wht_enabled:
-        header.append(Paragraph("WHT (5.4%)", styles["TableHdrR"]))
     rows = [header]
     for item in items:
         name = item.product.product_name if item.product else str(item.product_id)
@@ -268,16 +265,9 @@ def _items_table(items: list, styles, plain_whole_naira: bool = False, wht_enabl
             Paragraph(unit_price,              styles["Right"]),
             Paragraph(line_total,              styles["Right"]),
         ]
-        if wht_enabled:
-            wht_amount = int(round(float(item.line_total) * float(WHT_RATE)))
-            wht_str = _fmt_whole_plain(wht_amount) if plain_whole_naira else _fmt(wht_amount)
-            row.append(Paragraph(wht_str, styles["Right"]))
         rows.append(row)
 
-    if wht_enabled:
-        col_widths = [5.5 * cm, 1.5 * cm, 1.8 * cm, 2.8 * cm, 2.9 * cm, 2.5 * cm]
-    else:
-        col_widths = [7.5 * cm, 1.5 * cm, 2 * cm, 3.5 * cm, 3.5 * cm]
+    col_widths = [7.5 * cm, 1.5 * cm, 2 * cm, 3.5 * cm, 3.5 * cm]
     t = Table(rows, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         ("FONTSIZE",      (0, 0), (-1, -1), 9),

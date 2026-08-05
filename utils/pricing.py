@@ -1,20 +1,24 @@
 """
 Pricing engine.
 
-Final Selling Price = Cost Price + Supply Markup + Delivery Markup + Payment Term Markup
+Final Selling Price = Cost Price + Supply Markup + Delivery Markup
+                      + Payment Term Markup [+ WHT Markup when enabled]
 
 Default markups (seeded in DB, editable via /pricing-rules):
   Supply   : 5 %
   Delivery : 3 %  (only when delivery_type == "delivery")
   Net 30   : 3.5% (only when payment_term == "net_30")
+  WHT      : 5.4% (optional, baked into unit price — not a separate invoice line)
 """
-import math
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
 from typing import Optional
 
 from sqlalchemy.orm import Session
 import models
+
+
+WHT_RATE = Decimal("0.054")  # 5.4% — applied on cost like other markups when enabled
 
 
 def _round(value: Decimal) -> int:
@@ -68,24 +72,25 @@ def calculate_item_price(
     delivery_type: str,
     payment_term: str,
     rules: dict,
+    *,
+    wht_enabled: bool = False,
 ) -> dict:
     """
     Calculate per-unit pricing breakdown.
 
-    Returns a dict with all markup values and the final unit_price.
+    When wht_enabled, 5.4% WHT is added on cost alongside other markups and
+    included in unit_price (no separate customer-facing WHT line).
     """
     cost_price = Decimal(str(cost_price))
 
-    # Supply markup (always applied)
     supply_rule = rules.get("supply")
     supply_pct = (
         Decimal(str(supply_rule.markup_percentage)) / 100
         if supply_rule
-        else Decimal("0.05")  # fallback default
+        else Decimal("0.05")
     )
     supply_amount = _round(cost_price * supply_pct)
 
-    # Delivery markup (only if delivery)
     delivery_pct = Decimal("0")
     delivery_amount = 0
     if delivery_type == models.DeliveryType.delivery or delivery_type == "delivery":
@@ -94,7 +99,6 @@ def calculate_item_price(
             delivery_pct = Decimal(str(delivery_rule.markup_percentage)) / 100
             delivery_amount = _round(cost_price * delivery_pct)
 
-    # Payment term markup ("cash" uses the same rule as immediate when present)
     pt_pct = Decimal("0")
     pt_amount = 0
     pt_rules = rules.get("payment_terms", {})
@@ -104,15 +108,19 @@ def calculate_item_price(
         pt_pct = Decimal(str(pt_rule.markup_percentage)) / 100
         pt_amount = _round(cost_price * pt_pct)
 
-    base_unit = int(cost_price) + supply_amount + delivery_amount + pt_amount
-    unit_price = base_unit  # exact kobo — no artificial ceiling
+    wht_pct = WHT_RATE if wht_enabled else Decimal("0")
+    wht_amount = _round(cost_price * wht_pct) if wht_enabled else 0
+
+    unit_price = int(cost_price) + supply_amount + delivery_amount + pt_amount + wht_amount
 
     return {
         "supply_markup_pct": float(supply_pct * 100),
-        "supply_markup_amount": supply_amount,        # kobo (int)
+        "supply_markup_amount": supply_amount,
         "delivery_markup_pct": float(delivery_pct * 100),
-        "delivery_markup_amount": delivery_amount,    # kobo (int)
+        "delivery_markup_amount": delivery_amount,
         "payment_term_markup_pct": float(pt_pct * 100),
-        "payment_term_markup_amount": pt_amount,      # kobo (int)
-        "unit_price": unit_price,                     # kobo (int)
+        "payment_term_markup_amount": pt_amount,
+        "wht_markup_pct": float(wht_pct * 100),
+        "wht_markup_amount": wht_amount,
+        "unit_price": unit_price,
     }

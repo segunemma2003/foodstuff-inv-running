@@ -40,6 +40,8 @@ def _calc_and_build_items(
     delivery_type: str,
     payment_term: str,
     db: Session,
+    *,
+    wht_enabled: bool = False,
 ) -> tuple[List[models.QuotationItem], int]:
     rules = get_active_rules(db)
     built, total = [], 0
@@ -59,7 +61,9 @@ def _calc_and_build_items(
                 f"No active cost price for product '{name}' (id={it.product_id}). "
                 "Upload a cost price first.",
             )
-        pricing = calculate_item_price(cost, delivery_type, payment_term, rules)
+        pricing = calculate_item_price(
+            cost, delivery_type, payment_term, rules, wht_enabled=wht_enabled
+        )
         qty = Decimal(str(it.quantity))
 
         base_price = it.unit_price_override if it.unit_price_override is not None else pricing["unit_price"]
@@ -207,7 +211,13 @@ def preview_price(body: List[schemas.PricePreviewRequest], db: Session) -> List[
         product = db.query(models.Product).filter(models.Product.id == req.product_id).first()
         if product and not product.is_active:
             raise HTTPException(400, f"Product '{product.product_name}' is deactivated and cannot be used.")
-        pricing = calculate_item_price(cost, req.delivery_type, req.payment_term, rules)
+        pricing = calculate_item_price(
+            cost,
+            req.delivery_type,
+            req.payment_term,
+            rules,
+            wht_enabled=bool(getattr(req, "apply_wht", False)),
+        )
         qty = float(req.quantity)
         results.append(
             schemas.PricePreviewResponse(
@@ -261,12 +271,14 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
     if not body.items:
         raise HTTPException(400, "Quotation must have at least one item")
 
-    items, subtotal = _calc_and_build_items(body.items, body.delivery_type, body.payment_term, db)
+    apply_wht = getattr(body, "apply_wht", False)
+    items, subtotal = _calc_and_build_items(
+        body.items, body.delivery_type, body.payment_term, db, wht_enabled=apply_wht
+    )
     delivery_fee = int(body.delivery_fee or 0)
     items_total = subtotal + delivery_fee
     apply_handling = getattr(body, "apply_handling_charge", True)
     apply_vat = getattr(body, "apply_vat", False)
-    apply_wht = getattr(body, "apply_wht", False)
     handling_charge_amount = int(round(items_total * 5 / 100)) if apply_handling else 0
     vat_amount = int(round(items_total * 75 / 1000)) if apply_vat else 0
     total = items_total + handling_charge_amount + vat_amount
@@ -391,16 +403,18 @@ def update_quotation(
     if body.apply_wht is not None:
         quotation.wht_enabled = bool(body.apply_wht)
 
-    # Reprice when items change OR when payment term / delivery changes
-    # (quotation payment term always drives item markups).
+    # Reprice when items / payment / delivery / WHT change
+    # (WHT is baked into unit price like other markups).
     should_reprice = (
         body.items is not None
         or body.payment_term is not None
         or body.delivery_type is not None
+        or body.apply_wht is not None
     )
     if should_reprice:
         delivery = body.delivery_type or quotation.delivery_type
         payment = body.payment_term or quotation.payment_term
+        wht_on = quotation.wht_enabled if quotation.wht_enabled is not None else False
         if body.items is not None:
             item_specs = body.items
         else:
@@ -416,11 +430,25 @@ def update_quotation(
             ]
         for item in list(quotation.items):
             db.delete(item)
-        items, total = _calc_and_build_items(item_specs, delivery, payment, db)
+        items, subtotal = _calc_and_build_items(
+            item_specs, delivery, payment, db, wht_enabled=wht_on
+        )
         for item in items:
             item.quotation_id = quotation.id
             db.add(item)
-        quotation.total_amount = total
+        delivery_fee = int(quotation.delivery_fee or 0)
+        items_total = subtotal + delivery_fee
+        apply_handling = (
+            quotation.handling_charge_enabled
+            if quotation.handling_charge_enabled is not None
+            else True
+        )
+        apply_vat = quotation.vat_enabled if quotation.vat_enabled is not None else False
+        handling_charge_amount = int(round(items_total * 5 / 100)) if apply_handling else 0
+        vat_amount = int(round(items_total * 75 / 1000)) if apply_vat else 0
+        quotation.handling_charge_amount = handling_charge_amount
+        quotation.vat_amount = vat_amount
+        quotation.total_amount = items_total + handling_charge_amount + vat_amount
 
     audit.log(
         db,

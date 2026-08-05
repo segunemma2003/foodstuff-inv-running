@@ -19,6 +19,8 @@ import schemas
 from utils import audit
 from utils.make_integration import send_document_to_make_from_s3
 from utils.number_gen import next_invoice_number
+from utils.pricing import get_active_rules, calculate_item_price
+from decimal import Decimal
 from utils.pdf_generator import generate_cost_of_sales_pdf
 from utils.pdf_generator import generate_invoice_pdf as gen_pdf
 from utils.queue_events import log_queue_event
@@ -260,6 +262,24 @@ def bulk_delete_invoices(
     return result
 
 
+
+def _resolve_invoice_unit_price(item, *, cost_price: int, delivery_type: str, payment_term: str, rules: dict, wht_enabled: bool) -> tuple[int, dict]:
+    """Return (unit_price, pricing breakdown). Override wins; else cost + markups [+ WHT]."""
+    override = getattr(item, "unit_price_override", None)
+    if override is None:
+        override = getattr(item, "unit_price", None)
+    pricing = calculate_item_price(
+        Decimal(str(cost_price or 0)),
+        delivery_type,
+        payment_term,
+        rules,
+        wht_enabled=wht_enabled,
+    )
+    if override is not None:
+        return int(override), pricing
+    return int(pricing["unit_price"]), pricing
+
+
 def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: models.User) -> models.Invoice:
     customer = db.query(models.Customer).filter(models.Customer.id == body.customer_id).first()
     if not customer:
@@ -272,6 +292,8 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
     except ValueError:
         raise HTTPException(400, f"Invalid delivery_type '{body.delivery_type}'")
 
+    apply_wht = bool(getattr(body, "apply_wht", False))
+    rules = get_active_rules(db)
     line_items = []
     total_amount = 0
 
@@ -291,7 +313,14 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
             .first()
         )
         cost_price = int(latest_cost.cost_price) if latest_cost else 0
-        unit_price = int(item.unit_price)
+        unit_price, pricing = _resolve_invoice_unit_price(
+            item,
+            cost_price=cost_price,
+            delivery_type=body.delivery_type,
+            payment_term=body.payment_term,
+            rules=rules,
+            wht_enabled=apply_wht,
+        )
         quantity = float(item.quantity)
         line_total = int(round(unit_price * quantity))
         total_amount += line_total
@@ -302,12 +331,12 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
                 quantity=quantity,
                 uom=item.uom or product.unit_of_measure,
                 cost_price=cost_price,
-                supply_markup_pct=0,
-                supply_markup_amount=0,
-                delivery_markup_pct=0,
-                delivery_markup_amount=0,
-                payment_term_markup_pct=0,
-                payment_term_markup_amount=0,
+                supply_markup_pct=Decimal(str(pricing["supply_markup_pct"])),
+                supply_markup_amount=pricing["supply_markup_amount"],
+                delivery_markup_pct=Decimal(str(pricing["delivery_markup_pct"])),
+                delivery_markup_amount=pricing["delivery_markup_amount"],
+                payment_term_markup_pct=Decimal(str(pricing["payment_term_markup_pct"])),
+                payment_term_markup_amount=pricing["payment_term_markup_amount"],
                 discount_pct=0,
                 unit_price=unit_price,
                 line_total=line_total,
@@ -328,7 +357,7 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
         notes=body.notes,
         handling_charge_enabled=body.apply_handling_charge,
         handling_charge_amount=handling_charge_amount,
-        wht_enabled=getattr(body, "apply_wht", False),
+        wht_enabled=apply_wht,
         total_amount=grand_total,
         amount_paid=0,
         created_by=current_user.id,
@@ -372,14 +401,22 @@ def update_invoice(db: Session, invoice_id: int, body: schemas.InvoiceUpdate, cu
             raise HTTPException(400, f"Invalid delivery_type '{body.delivery_type}'")
     if body.notes is not None:
         inv.notes = body.notes
+    wht_changed = body.apply_wht is not None and bool(body.apply_wht) != bool(inv.wht_enabled)
     if body.apply_wht is not None:
         inv.wht_enabled = bool(body.apply_wht)
+
+    delivery_str = (
+        inv.delivery_type.value if hasattr(inv.delivery_type, "value") else str(inv.delivery_type)
+    )
+    payment_str = inv.payment_term or "cash"
+    wht_on = bool(inv.wht_enabled)
 
     if body.items is not None:
         for old_item in list(inv.items):
             db.delete(old_item)
         db.flush()
 
+        rules = get_active_rules(db)
         line_items = []
         total_amount = 0
         for item in body.items:
@@ -396,7 +433,30 @@ def update_invoice(db: Session, invoice_id: int, body: schemas.InvoiceUpdate, cu
                 .first()
             )
             cost_price = int(latest_cost.cost_price) if latest_cost else 0
-            unit_price = int(item.unit_price)
+            # When WHT flag changes, ignore client unit prices and rebuild from cost + rules.
+            # Otherwise honor override/unit_price when provided.
+            if wht_changed:
+                class _NoOverride:
+                    unit_price = None
+                    unit_price_override = None
+                priced_from = _NoOverride()
+            else:
+                priced_from = item
+            unit_price, pricing = _resolve_invoice_unit_price(
+                priced_from,
+                cost_price=cost_price,
+                delivery_type=delivery_str,
+                payment_term=payment_str,
+                rules=rules,
+                wht_enabled=wht_on,
+            )
+            # If client sent an explicit price and WHT did not change, keep it
+            if not wht_changed:
+                override = getattr(item, "unit_price_override", None)
+                if override is None:
+                    override = getattr(item, "unit_price", None)
+                if override is not None:
+                    unit_price = int(override)
             quantity = float(item.quantity)
             line_total = int(round(unit_price * quantity))
             total_amount += line_total
@@ -408,12 +468,12 @@ def update_invoice(db: Session, invoice_id: int, body: schemas.InvoiceUpdate, cu
                     quantity=quantity,
                     uom=item.uom or product.unit_of_measure,
                     cost_price=cost_price,
-                    supply_markup_pct=0,
-                    supply_markup_amount=0,
-                    delivery_markup_pct=0,
-                    delivery_markup_amount=0,
-                    payment_term_markup_pct=0,
-                    payment_term_markup_amount=0,
+                    supply_markup_pct=Decimal(str(pricing["supply_markup_pct"])),
+                    supply_markup_amount=pricing["supply_markup_amount"],
+                    delivery_markup_pct=Decimal(str(pricing["delivery_markup_pct"])),
+                    delivery_markup_amount=pricing["delivery_markup_amount"],
+                    payment_term_markup_pct=Decimal(str(pricing["payment_term_markup_pct"])),
+                    payment_term_markup_amount=pricing["payment_term_markup_amount"],
                     discount_pct=0,
                     unit_price=unit_price,
                     line_total=line_total,
@@ -423,6 +483,32 @@ def update_invoice(db: Session, invoice_id: int, body: schemas.InvoiceUpdate, cu
         apply_handling = body.apply_handling_charge if body.apply_handling_charge is not None else inv.handling_charge_enabled
         handling_charge_amount = int(round(total_amount * 5 / 100)) if apply_handling else 0
         inv.items = line_items
+        inv.handling_charge_enabled = apply_handling
+        inv.handling_charge_amount = handling_charge_amount
+        inv.total_amount = total_amount + handling_charge_amount
+    elif wht_changed:
+        # Reprice existing lines from cost so WHT is baked into unit prices
+        rules = get_active_rules(db)
+        total_amount = 0
+        for ii in inv.items:
+            pricing = calculate_item_price(
+                Decimal(str(ii.cost_price or 0)),
+                delivery_str,
+                payment_str,
+                rules,
+                wht_enabled=wht_on,
+            )
+            ii.supply_markup_pct = Decimal(str(pricing["supply_markup_pct"]))
+            ii.supply_markup_amount = pricing["supply_markup_amount"]
+            ii.delivery_markup_pct = Decimal(str(pricing["delivery_markup_pct"]))
+            ii.delivery_markup_amount = pricing["delivery_markup_amount"]
+            ii.payment_term_markup_pct = Decimal(str(pricing["payment_term_markup_pct"]))
+            ii.payment_term_markup_amount = pricing["payment_term_markup_amount"]
+            ii.unit_price = int(pricing["unit_price"])
+            ii.line_total = int(round(float(ii.quantity) * ii.unit_price))
+            total_amount += ii.line_total
+        apply_handling = body.apply_handling_charge if body.apply_handling_charge is not None else inv.handling_charge_enabled
+        handling_charge_amount = int(round(total_amount * 5 / 100)) if apply_handling else 0
         inv.handling_charge_enabled = apply_handling
         inv.handling_charge_amount = handling_charge_amount
         inv.total_amount = total_amount + handling_charge_amount
