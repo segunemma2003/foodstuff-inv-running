@@ -20,6 +20,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from xml.sax.saxutils import escape as xml_escape
 
 import models
 
@@ -254,8 +255,9 @@ def _items_table(items: list, styles, plain_whole_naira: bool = False, wht_enabl
     ]
     rows = [header]
     for item in items:
-        name = item.product.product_name if item.product else str(item.product_id)
-        uom  = getattr(item, "uom", None) or "—"
+        raw_name = item.product.product_name if item.product else str(item.product_id)
+        name = xml_escape(str(raw_name or ""))
+        uom  = xml_escape(str(getattr(item, "uom", None) or "—"))
         unit_price = _fmt_whole_plain(item.unit_price) if plain_whole_naira else _fmt(item.unit_price)
         line_total = _fmt_whole_plain(item.line_total) if plain_whole_naira else _fmt(item.line_total)
         row = [
@@ -271,6 +273,7 @@ def _items_table(items: list, styles, plain_whole_naira: bool = False, wht_enabl
     t = Table(rows, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         ("FONTSIZE",      (0, 0), (-1, -1), 9),
+        ("TEXTCOLOR",     (0, 0), (-1, -1), DARK_TEXT),
         ("LINEABOVE",     (0, 0), (-1, 0),  1,   DARK_TEXT),
         ("LINEBELOW",     (0, 0), (-1, 0),  1,   DARK_TEXT),
         ("LINEBELOW",     (0, -1), (-1, -1), 0.5, BORDER_GRAY),
