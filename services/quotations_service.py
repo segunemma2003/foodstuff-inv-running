@@ -137,15 +137,19 @@ def _build_invoice_from_quotation(
         raise HTTPException(400, "Only approved quotations can be converted to invoices")
 
     today = date.today()
+    _due_days = {
+        "net_3": 3, "net_5": 5, "net_7": 7, "net_15": 15,
+        "net_30": 30, "net_45": 45, "net_60": 60, "net_90": 90,
+        "credit_3": 3, "credit_5": 5, "credit_7": 7,
+        "credit_15": 15, "credit_15d": 15,
+        "credit_30": 30, "credit_30d": 30,
+        "credit_60": 60, "credit_60d": 60,
+        "credit_90": 90, "credit_90d": 90,
+    }
     due = None
-    if quotation.payment_term == "net_30":
-        due = today + timedelta(days=30)
-    elif quotation.payment_term == "net_60":
-        due = today + timedelta(days=60)
-    elif quotation.payment_term == "net_15":
-        due = today + timedelta(days=15)
-    elif quotation.payment_term == "net_90":
-        due = today + timedelta(days=90)
+    days = _due_days.get((quotation.payment_term or "").strip().lower())
+    if days:
+        due = today + timedelta(days=days)
 
     invoice = models.Invoice(
         invoice_number=next_invoice_number(db),

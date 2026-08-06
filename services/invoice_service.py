@@ -292,6 +292,11 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
     except ValueError:
         raise HTTPException(400, f"Invalid delivery_type '{body.delivery_type}'")
 
+    # Prefer admin-selected term; if omitted, use the customer's default payment term
+    payment_term = (body.payment_term or "").strip() or None
+    if not payment_term:
+        payment_term = (customer.default_payment_term or "").strip() or "cash"
+
     apply_wht = bool(getattr(body, "apply_wht", False))
     rules = get_active_rules(db)
     line_items = []
@@ -317,7 +322,7 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
             item,
             cost_price=cost_price,
             delivery_type=body.delivery_type,
-            payment_term=body.payment_term,
+            payment_term=payment_term,
             rules=rules,
             wht_enabled=apply_wht,
         )
@@ -346,13 +351,28 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
     handling_charge_amount = int(round(total_amount * 5 / 100)) if body.apply_handling_charge else 0
     grand_total = total_amount + handling_charge_amount
 
+    due_date = body.due_date
+    if due_date is None and body.invoice_date:
+        from datetime import timedelta
+        _days = {
+            "net_3": 3, "net_5": 5, "net_7": 7, "net_15": 15,
+            "net_30": 30, "net_45": 45, "net_60": 60, "net_90": 90,
+            "credit_3": 3, "credit_5": 5, "credit_7": 7,
+            "credit_15": 15, "credit_15d": 15,
+            "credit_30": 30, "credit_30d": 30,
+            "credit_60": 60, "credit_60d": 60,
+            "credit_90": 90, "credit_90d": 90,
+        }.get((payment_term or "").lower())
+        if _days:
+            due_date = body.invoice_date + timedelta(days=_days)
+
     inv = models.Invoice(
         invoice_number=next_invoice_number(db),
         quotation_id=None,
         customer_id=customer.id,
         invoice_date=body.invoice_date,
-        due_date=body.due_date,
-        payment_term=body.payment_term,
+        due_date=due_date,
+        payment_term=payment_term,
         delivery_type=delivery_type,
         notes=body.notes,
         handling_charge_enabled=body.apply_handling_charge,
