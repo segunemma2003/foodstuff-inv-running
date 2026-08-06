@@ -125,6 +125,7 @@ class Customer(Base):
     category = Column(String(100))
     default_delivery = Column(SAEnum(DeliveryType), default=DeliveryType.pickup)
     default_payment_term = Column(String(50), default="immediate")
+    credit_limit = Column(BigInteger, default=0, nullable=False)  # kobo — FS Credit assignable from NI
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

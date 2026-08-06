@@ -131,6 +131,7 @@ class CustomerCreate(BaseModel):
     category: Optional[str] = None
     default_delivery: DeliveryType = DeliveryType.pickup
     default_payment_term: str = "immediate"
+    credit_limit: int = 0  # kobo
 
 
 class CustomerUpdate(BaseModel):
@@ -143,6 +144,7 @@ class CustomerUpdate(BaseModel):
     category: Optional[str] = None
     default_delivery: Optional[DeliveryType] = None
     default_payment_term: Optional[str] = None
+    credit_limit: Optional[int] = None  # kobo
     is_active: Optional[bool] = None
 
 
@@ -168,6 +170,7 @@ class CustomerOut(BaseModel):
     category: Optional[str] = None
     default_delivery: DeliveryType
     default_payment_term: str
+    credit_limit: int = 0
     is_active: bool
     created_at: datetime
     last_order_date: Optional[date] = None

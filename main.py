@@ -164,6 +164,7 @@ def run_migrations():
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS markup_17_amount BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS wht_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS wht_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS credit_limit BIGINT NOT NULL DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status)",
         "CREATE INDEX IF NOT EXISTS idx_invoices_customer_id ON invoices(customer_id)",

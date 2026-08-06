@@ -96,6 +96,11 @@ def create_customer(db: Session, body: schemas.CustomerCreate, current_user: mod
     )
     db.commit()
     db.refresh(customer)
+    if int(getattr(customer, "credit_limit", 0) or 0) > 0:
+        try:
+            _push_credit_limit_to_fss(customer.id, int(customer.credit_limit or 0))
+        except Exception:
+            pass
     return customer
 
 
@@ -135,7 +140,34 @@ def update_customer(
     )
     db.commit()
     db.refresh(c)
+
+    # Push credit limit to FSS when assigned/changed from invoice software
+    if "credit_limit" in updates:
+        try:
+            _push_credit_limit_to_fss(c.id, int(c.credit_limit or 0))
+        except Exception:
+            pass
     return c
+
+
+def _push_credit_limit_to_fss(inventory_customer_id: int, credit_limit_kobo: int) -> None:
+    """Best-effort: tell foodstuff-api to sync FS Credit limit for this NI customer."""
+    import os
+    import httpx
+
+    base = (os.getenv("FOODSTUFF_API_URL") or "").rstrip("/")
+    key = os.getenv("FOODSTUFF_API_KEY") or ""
+    if not base or not key:
+        return
+    httpx.post(
+        f"{base}/api/internal/ni/credit-limit",
+        json={
+            "inventoryCustomerId": inventory_customer_id,
+            "creditLimit": credit_limit_kobo,
+        },
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        timeout=15,
+    )
 
 
 def delete_customer(db: Session, customer_id: int, current_user: models.User) -> schemas.MessageResponse:
