@@ -49,6 +49,10 @@ async def list_custom_orders(
             if isinstance(data, list):
                 return {"items": data, "total": len(data)}
             return data
-        raise HTTPException(status_code=resp.status_code, detail="Failed to fetch custom orders")
+        # Service key is not an FSS admin JWT — don't bubble 401 or the NI
+        # frontend clears the staff session and boots the user to /login.
+        if resp.status_code in (401, 403):
+            return {"items": [], "total": 0}
+        raise HTTPException(status_code=502, detail="Failed to fetch custom orders")
     except httpx.RequestError:
         raise HTTPException(status_code=503, detail="Foodstuff API unavailable")
