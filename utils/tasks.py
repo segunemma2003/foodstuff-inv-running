@@ -94,12 +94,8 @@ def generate_quotation_pdf_task(self, quotation_id: int):
         if q is None:
             raise ValueError(f"Quotation {quotation_id} not found")
 
-        bank_accounts = (
-            db.query(models.PaymentAccount)
-            .filter(models.PaymentAccount.is_active == True)
-            .order_by(models.PaymentAccount.is_default.desc())
-            .all()
-        )
+        from utils.bank_accounts import resolve_bank_accounts_for_customer
+        bank_accounts = resolve_bank_accounts_for_customer(db, q.customer_id)
         pdf_bytes = generate_quotation_pdf(q, bank_accounts=bank_accounts)
         s3_key = f"jobs/{self.request.id}.pdf"
         upload_bytes(s3_key, pdf_bytes, "application/pdf")
@@ -125,12 +121,8 @@ def generate_invoice_pdf_task(self, invoice_id: int):
         if inv is None:
             raise ValueError(f"Invoice {invoice_id} not found")
 
-        bank_accounts = (
-            db.query(models.PaymentAccount)
-            .filter(models.PaymentAccount.is_active == True)
-            .order_by(models.PaymentAccount.is_default.desc())
-            .all()
-        )
+        from utils.bank_accounts import resolve_bank_accounts_for_customer
+        bank_accounts = resolve_bank_accounts_for_customer(db, inv.customer_id)
         pdf_bytes = generate_invoice_pdf(inv, bank_accounts=bank_accounts)
         s3_key = f"jobs/{self.request.id}.pdf"
         upload_bytes(s3_key, pdf_bytes, "application/pdf")
@@ -195,12 +187,8 @@ def send_quotation_to_customer_task(self, quotation_id: int):
         if not customer_email:
             raise ValueError(f"Customer has no email address")
 
-        bank_accounts = (
-            db.query(models.PaymentAccount)
-            .filter(models.PaymentAccount.is_active == True)
-            .order_by(models.PaymentAccount.is_default.desc())
-            .all()
-        )
+        from utils.bank_accounts import resolve_bank_accounts_for_customer
+        bank_accounts = resolve_bank_accounts_for_customer(db, q.customer_id)
         pdf_bytes = generate_quotation_pdf(q, bank_accounts=bank_accounts)
         subject, html, text = tpl_quotation_to_customer(
             q.quotation_number,
@@ -246,12 +234,8 @@ def send_invoice_to_recipients_task(self, invoice_id: int, recipients: list[str]
         if inv.custom_pdf_s3_key:
             pdf_bytes = download_bytes(inv.custom_pdf_s3_key)
         else:
-            bank_accounts = (
-                db.query(models.PaymentAccount)
-                .filter(models.PaymentAccount.is_active == True)
-                .order_by(models.PaymentAccount.is_default.desc())
-                .all()
-            )
+            from utils.bank_accounts import resolve_bank_accounts_for_customer
+            bank_accounts = resolve_bank_accounts_for_customer(db, inv.customer_id)
             pdf_bytes = generate_invoice_pdf(inv, bank_accounts=bank_accounts)
 
         customer_name = inv.customer.customer_name if inv.customer else "Customer"

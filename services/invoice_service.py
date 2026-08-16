@@ -583,12 +583,8 @@ def download_invoice_pdf(db: Session, invoice_id: int):
             headers={"Content-Disposition": f'attachment; filename="{inv.invoice_number}.pdf"'},
         )
 
-    bank_accounts = (
-        db.query(models.PaymentAccount)
-        .filter(models.PaymentAccount.is_active == True)
-        .order_by(models.PaymentAccount.is_default.desc())
-        .all()
-    )
+    from utils.bank_accounts import resolve_bank_accounts_for_customer
+    bank_accounts = resolve_bank_accounts_for_customer(db, inv.customer_id)
     paystack_payment = (
         db.query(models.Payment)
         .filter(

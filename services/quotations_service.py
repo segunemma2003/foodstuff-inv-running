@@ -568,12 +568,8 @@ def download_quotation_pdf(db: Session, quotation_id: int) -> StreamingResponse:
     if not quotation:
         raise HTTPException(404, "Quotation not found")
 
-    bank_accounts = (
-        db.query(models.PaymentAccount)
-        .filter(models.PaymentAccount.is_active == True)
-        .order_by(models.PaymentAccount.is_default.desc())
-        .all()
-    )
+    from utils.bank_accounts import resolve_bank_accounts_for_customer
+    bank_accounts = resolve_bank_accounts_for_customer(db, quotation.customer_id)
     pdf_bytes = gen_pdf(quotation, bank_accounts=bank_accounts)
     return StreamingResponse(
         BytesIO(pdf_bytes),
