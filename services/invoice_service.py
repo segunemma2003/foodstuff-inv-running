@@ -19,7 +19,7 @@ import schemas
 from utils import audit
 from utils.make_integration import send_document_to_make_from_s3
 from utils.number_gen import next_invoice_number
-from utils.pricing import get_active_rules, calculate_item_price
+from utils.pricing import get_active_rules, calculate_item_price, resolve_extra_charges
 from decimal import Decimal
 from utils.pdf_generator import generate_cost_of_sales_pdf
 from utils.pdf_generator import generate_invoice_pdf as gen_pdf
@@ -349,7 +349,15 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
         )
 
     handling_charge_amount = int(round(total_amount * 5 / 100)) if body.apply_handling_charge else 0
-    grand_total = total_amount + handling_charge_amount
+
+    try:
+        extra_charges, extra_charges_amount = resolve_extra_charges(
+            db, list(getattr(body, "other_rule_ids", None) or []), total_amount
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    grand_total = total_amount + handling_charge_amount + extra_charges_amount
 
     due_date = body.due_date
     if due_date is None and body.invoice_date:
@@ -377,6 +385,8 @@ def create_invoice(db: Session, body: schemas.InvoiceCreate, current_user: model
         notes=body.notes,
         handling_charge_enabled=body.apply_handling_charge,
         handling_charge_amount=handling_charge_amount,
+        extra_charges=extra_charges,
+        extra_charges_amount=extra_charges_amount,
         wht_enabled=apply_wht,
         total_amount=grand_total,
         amount_paid=0,
@@ -538,6 +548,29 @@ def update_invoice(db: Session, invoice_id: int, body: schemas.InvoiceUpdate, cu
         inv.handling_charge_enabled = body.apply_handling_charge
         inv.handling_charge_amount = handling_charge_amount
         inv.total_amount = subtotal + handling_charge_amount
+
+    if body.items is not None or wht_changed or body.apply_handling_charge is not None or body.other_rule_ids is not None:
+        subtotal = sum(i.line_total for i in inv.items)
+        if body.other_rule_ids is not None:
+            try:
+                extra_charges, extra_charges_amount = resolve_extra_charges(db, list(body.other_rule_ids), subtotal)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            inv.extra_charges = extra_charges
+            inv.extra_charges_amount = extra_charges_amount
+        else:
+            # Not touching the individual charges on this edit — re-snapshot
+            # the existing ones against the (possibly changed) subtotal.
+            existing_ids = [c.get("rule_id") for c in (inv.extra_charges or []) if c.get("rule_id")]
+            try:
+                extra_charges, extra_charges_amount = resolve_extra_charges(db, existing_ids, subtotal) if existing_ids else ([], 0)
+                inv.extra_charges = extra_charges
+                inv.extra_charges_amount = extra_charges_amount
+            except ValueError:
+                # Underlying rule went globally active since — don't block an
+                # unrelated edit over it, just keep the prior snapshot amount.
+                extra_charges_amount = inv.extra_charges_amount or 0
+        inv.total_amount = subtotal + (inv.handling_charge_amount or 0) + extra_charges_amount
 
     if inv.quotation_id:
         qt = db.query(models.Quotation).filter(models.Quotation.id == inv.quotation_id).first()

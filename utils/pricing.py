@@ -65,6 +65,51 @@ def get_active_rules(db: Session) -> dict:
     }
 
 
+def resolve_extra_charges(db: Session, rule_ids: list[int], subtotal: int) -> tuple[list[dict], int]:
+    """Resolve admin-picked "other" rules attached to ONE invoice/quotation only.
+
+    Supply markup is always global. An "other" rule is either global (active
+    — auto-applied to every document via get_active_rules/calculate_item_price
+    above) OR attached individually to a single document, never both — so
+    only INACTIVE "other" rules are eligible here; picking an active one would
+    double-count it. Computed on the document subtotal (post line items, same
+    base as handling_charge/vat), snapshotted so later edits to the rule don't
+    retroactively change this document's total.
+    """
+    if not rule_ids:
+        return [], 0
+
+    rules = (
+        db.query(models.PricingRule)
+        .filter(models.PricingRule.id.in_(rule_ids))
+        .all()
+    )
+    found = {r.id: r for r in rules}
+    charges = []
+    total = 0
+    for rid in rule_ids:
+        r = found.get(rid)
+        if not r:
+            raise ValueError(f"Pricing rule {rid} not found")
+        if r.rule_type != models.PricingRuleType.other:
+            raise ValueError(f"Rule '{r.rule_name}' is not an \"other\" rule — only other-type rules can be attached individually")
+        if r.is_active:
+            raise ValueError(
+                f"Rule '{r.rule_name}' is currently active globally — it already applies to every "
+                f"invoice/quotation. Deactivate it first if you want to attach it to this document only."
+            )
+        pct = Decimal(str(r.markup_percentage))
+        amount = _round(Decimal(str(subtotal)) * pct / 100)
+        total += amount
+        charges.append({
+            "rule_id": r.id,
+            "name": r.rule_name,
+            "pct": float(pct),
+            "amount": amount,
+        })
+    return charges, total
+
+
 def get_current_cost(product_id: int, db: Session) -> Optional[Decimal]:
     today = date.today()
     record = (

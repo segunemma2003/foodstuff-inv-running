@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 import models
 import schemas
 from utils import audit
-from utils.pricing import get_active_rules, get_current_cost, calculate_item_price
+from utils.pricing import get_active_rules, get_current_cost, calculate_item_price, resolve_extra_charges
 from utils.number_gen import next_quotation_number
 from utils.tasks import (
     generate_quotation_pdf_task,
@@ -165,6 +165,8 @@ def _build_invoice_from_quotation(
         vat_enabled=quotation.vat_enabled if quotation.vat_enabled is not None else False,
         vat_amount=quotation.vat_amount or 0,
         wht_enabled=quotation.wht_enabled if quotation.wht_enabled is not None else False,
+        extra_charges=quotation.extra_charges or [],
+        extra_charges_amount=quotation.extra_charges_amount or 0,
         total_amount=quotation.total_amount,
         notes=quotation.notes,
         created_by=actor_user.id,
@@ -285,7 +287,13 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
     apply_vat = getattr(body, "apply_vat", False)
     handling_charge_amount = int(round(items_total * 5 / 100)) if apply_handling else 0
     vat_amount = int(round(items_total * 75 / 1000)) if apply_vat else 0
-    total = items_total + handling_charge_amount + vat_amount
+    try:
+        extra_charges, extra_charges_amount = resolve_extra_charges(
+            db, list(getattr(body, "other_rule_ids", None) or []), items_total
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    total = items_total + handling_charge_amount + vat_amount + extra_charges_amount
     quotation = models.Quotation(
         quotation_number=next_quotation_number(db),
         customer_id=body.customer_id,
@@ -299,6 +307,8 @@ def create_quotation(db: Session, body: schemas.QuotationCreate, current_user: m
         vat_enabled=apply_vat,
         vat_amount=vat_amount,
         wht_enabled=apply_wht,
+        extra_charges=extra_charges,
+        extra_charges_amount=extra_charges_amount,
         total_amount=total,
         created_by=current_user.id,
         status=models.QuotationStatus.draft,
@@ -414,6 +424,7 @@ def update_quotation(
         or body.payment_term is not None
         or body.delivery_type is not None
         or body.apply_wht is not None
+        or body.other_rule_ids is not None
     )
     if should_reprice:
         delivery = body.delivery_type or quotation.delivery_type
@@ -452,7 +463,21 @@ def update_quotation(
         vat_amount = int(round(items_total * 75 / 1000)) if apply_vat else 0
         quotation.handling_charge_amount = handling_charge_amount
         quotation.vat_amount = vat_amount
-        quotation.total_amount = items_total + handling_charge_amount + vat_amount
+        if body.other_rule_ids is not None:
+            rule_ids = body.other_rule_ids
+        else:
+            rule_ids = [c.get("rule_id") for c in (quotation.extra_charges or []) if c.get("rule_id")]
+        try:
+            extra_charges, extra_charges_amount = resolve_extra_charges(db, list(rule_ids or []), items_total)
+            quotation.extra_charges = extra_charges
+            quotation.extra_charges_amount = extra_charges_amount
+        except ValueError as e:
+            if body.other_rule_ids is not None:
+                raise HTTPException(400, str(e))
+            # Underlying rule went globally active since — don't block an
+            # unrelated edit over it, just keep the prior snapshot amount.
+            extra_charges_amount = quotation.extra_charges_amount or 0
+        quotation.total_amount = items_total + handling_charge_amount + vat_amount + extra_charges_amount
 
     audit.log(
         db,

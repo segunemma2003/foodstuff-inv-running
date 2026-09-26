@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Column, Integer, BigInteger, String, Numeric, Boolean, DateTime,
-    Date, Text, ForeignKey, Enum as SAEnum, UniqueConstraint
+    Date, Text, ForeignKey, Enum as SAEnum, UniqueConstraint, JSON
 )
 from sqlalchemy.orm import relationship
 
@@ -224,6 +224,13 @@ class Quotation(Base):
     vat_amount = Column(BigInteger, default=0)
     markup_17_enabled = Column(Boolean, default=False)
     wht_enabled = Column(Boolean, default=False)
+    # "other" pricing rules (rule_type=other) applied to THIS quotation only,
+    # independent of whether the rule is globally active — the individual-
+    # attachment counterpart to a rule being switched on globally. Snapshot
+    # list of {rule_id, name, pct, amount}; amount is the sum, baked into
+    # total_amount at creation/edit time same as handling_charge/vat.
+    extra_charges = Column(JSON, default=list)
+    extra_charges_amount = Column(BigInteger, default=0)
     total_amount = Column(BigInteger, default=0)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     approved_by = Column(Integer, ForeignKey("users.id"))
@@ -296,6 +303,11 @@ class Invoice(Base):
     vat_amount = Column(BigInteger, default=0)
     markup_17_enabled = Column(Boolean, default=False)
     wht_enabled = Column(Boolean, default=False)
+    # "other" pricing rules (rule_type=other) applied to THIS invoice only,
+    # independent of whether the rule is globally active — see Quotation
+    # for the full explanation; same snapshot shape.
+    extra_charges = Column(JSON, default=list)
+    extra_charges_amount = Column(BigInteger, default=0)
     total_amount = Column(BigInteger, default=0)
     amount_paid = Column(BigInteger, default=0)
     custom_pdf_s3_key = Column(String(255), nullable=True)

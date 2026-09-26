@@ -10,10 +10,14 @@ import schemas
 from utils import audit
 
 
-def list_rules(db: Session, is_active: Optional[bool] = None) -> List[models.PricingRule]:
+def list_rules(
+    db: Session, is_active: Optional[bool] = None, rule_type: Optional[str] = None
+) -> List[models.PricingRule]:
     pricing_rule_query = db.query(models.PricingRule)
     if is_active is not None:
         pricing_rule_query = pricing_rule_query.filter(models.PricingRule.is_active == is_active)
+    if rule_type is not None:
+        pricing_rule_query = pricing_rule_query.filter(models.PricingRule.rule_type == rule_type)
     return pricing_rule_query.order_by(models.PricingRule.rule_type, models.PricingRule.rule_name).all()
 
 

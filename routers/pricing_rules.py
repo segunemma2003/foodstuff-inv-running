@@ -20,10 +20,11 @@ router = APIRouter(prefix="/pricing-rules", tags=["Pricing Rules"])
 @router.get("", response_model=List[schemas.PricingRuleOut])
 def list_rules(
     is_active: Optional[bool] = None,
+    rule_type: Optional[str] = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    return pricing_rule_service.list_rules(db, is_active=is_active)
+    return pricing_rule_service.list_rules(db, is_active=is_active, rule_type=rule_type)
 
 
 @router.post("/bulk-delete", response_model=schemas.BulkDeleteResult)

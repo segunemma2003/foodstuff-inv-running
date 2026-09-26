@@ -165,6 +165,12 @@ def run_migrations():
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS markup_17_amount BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS wht_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS wht_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        # Per-document "other" markup rules attached individually (as opposed
+        # to a rule being switched on globally for every invoice/quotation).
+        "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS extra_charges JSON DEFAULT '[]'",
+        "ALTER TABLE quotations ADD COLUMN IF NOT EXISTS extra_charges_amount BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS extra_charges JSON DEFAULT '[]'",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS extra_charges_amount BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE customers ADD COLUMN IF NOT EXISTS credit_limit BIGINT NOT NULL DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status)",

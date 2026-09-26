@@ -341,6 +341,9 @@ class QuotationCreate(BaseModel):
     apply_handling_charge: bool = True
     apply_vat: bool = False
     apply_wht: bool = False
+    # IDs of inactive rule_type="other" PricingRules to attach to THIS
+    # quotation only (not global — see utils.pricing.resolve_extra_charges).
+    other_rule_ids: List[int] = []
     items: List[QuotationItemCreate]
 
 
@@ -349,6 +352,7 @@ class QuotationUpdate(BaseModel):
     payment_term: Optional[str] = None
     notes: Optional[str] = None
     apply_wht: Optional[bool] = None
+    other_rule_ids: Optional[List[int]] = None
     items: Optional[List[QuotationItemCreate]] = None
 
 
@@ -421,6 +425,8 @@ class QuotationListOut(BaseModel):
     vat_enabled: bool = False
     vat_amount: int = 0
     wht_enabled: bool = False
+    extra_charges: List[dict] = []
+    extra_charges_amount: int = 0
 
     total_amount: int
     created_by: int
@@ -449,6 +455,8 @@ class QuotationOut(BaseModel):
     vat_enabled: bool = False
     vat_amount: int = 0                      # kobo (7.5% of subtotal)
     wht_enabled: bool = False
+    extra_charges: List[dict] = []           # [{rule_id, name, pct, amount}] — individual, not global
+    extra_charges_amount: int = 0            # kobo
 
     total_amount: int                        # kobo
     created_by: int
@@ -482,6 +490,9 @@ class InvoiceCreate(BaseModel):
     notes: Optional[str] = None
     apply_handling_charge: bool = True
     apply_wht: bool = False
+    # IDs of inactive rule_type="other" PricingRules to attach to THIS
+    # invoice only (not global — see utils.pricing.resolve_extra_charges).
+    other_rule_ids: List[int] = []
     items: List[InvoiceItemCreate]
 
 
@@ -494,6 +505,7 @@ class InvoiceUpdate(BaseModel):
     notes: Optional[str] = None
     apply_handling_charge: Optional[bool] = None
     apply_wht: Optional[bool] = None
+    other_rule_ids: Optional[List[int]] = None
     items: Optional[List[InvoiceItemCreate]] = None
 
 
@@ -538,6 +550,8 @@ class InvoiceListOut(BaseModel):
     vat_enabled: bool = False
     vat_amount: int = 0
     wht_enabled: bool = False
+    extra_charges: List[dict] = []
+    extra_charges_amount: int = 0
 
     total_amount: int
     amount_paid: int = 0
@@ -575,6 +589,8 @@ class InvoiceOut(BaseModel):
     vat_enabled: bool = False
     vat_amount: int = 0                      # kobo (7.5% of subtotal)
     wht_enabled: bool = False
+    extra_charges: List[dict] = []           # [{rule_id, name, pct, amount}] — individual, not global
+    extra_charges_amount: int = 0            # kobo
 
     total_amount: int                        # kobo
     amount_paid: int = 0                     # kobo
