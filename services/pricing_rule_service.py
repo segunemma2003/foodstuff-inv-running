@@ -42,6 +42,49 @@ def create_rule(db: Session, body: schemas.PricingRuleCreate, current_user: mode
     if body.rule_type == models.PricingRuleType.payment_term and not body.payment_term_code:
         raise HTTPException(400, "payment_term_code required for payment_term rule type")
 
+    # supply/delivery are singleton slots — get_active_rules() keeps only the
+    # last one it sees, so a second active row of the same type silently
+    # shadows the first (this is exactly how "Cash Back Rule" wiped out the
+    # 7% supply markup: it was created as rule_type=supply instead of other).
+    # A second payment_term rule for the same code has the same problem.
+    # Block it here instead: point the admin at editing the existing rule, or
+    # at rule_type="other" if what they actually want is an additional,
+    # stacking markup (cash back, promos, ...).
+    if body.is_active and body.rule_type in (models.PricingRuleType.supply, models.PricingRuleType.delivery):
+        clash = (
+            db.query(models.PricingRule)
+            .filter(
+                models.PricingRule.rule_type == body.rule_type,
+                models.PricingRule.is_active == True,
+            )
+            .first()
+        )
+        if clash:
+            raise HTTPException(
+                400,
+                f"An active {body.rule_type.value} rule already exists ('{clash.rule_name}', "
+                f"{clash.markup_percentage}%). Edit or deactivate it instead of creating a second "
+                f"one — only one active {body.rule_type.value} rule is used at a time. If you meant "
+                f"to add an extra, stacking charge (e.g. cash back), use rule_type=\"other\".",
+            )
+    if body.is_active and body.rule_type == models.PricingRuleType.payment_term and body.payment_term_code:
+        clash = (
+            db.query(models.PricingRule)
+            .filter(
+                models.PricingRule.rule_type == models.PricingRuleType.payment_term,
+                models.PricingRule.payment_term_code == body.payment_term_code,
+                models.PricingRule.is_active == True,
+            )
+            .first()
+        )
+        if clash:
+            raise HTTPException(
+                400,
+                f"An active payment_term rule for '{body.payment_term_code}' already exists "
+                f"('{clash.rule_name}', {clash.markup_percentage}%). Edit or deactivate it instead "
+                f"of creating a second one.",
+            )
+
     rule = models.PricingRule(
         **body.model_dump(),
         created_by=current_user.id,
@@ -75,6 +118,28 @@ def update_rule(
     rule = db.query(models.PricingRule).filter(models.PricingRule.id == rule_id).first()
     if not rule:
         raise HTTPException(404, "Pricing rule not found")
+
+    # Reactivating a supply/delivery/payment_term rule can shadow another
+    # already-active one of the same type — same guard as create_rule.
+    will_be_active = body.is_active if body.is_active is not None else rule.is_active
+    if will_be_active and not rule.is_active and rule.rule_type in (
+        models.PricingRuleType.supply, models.PricingRuleType.delivery,
+    ):
+        clash = (
+            db.query(models.PricingRule)
+            .filter(
+                models.PricingRule.rule_type == rule.rule_type,
+                models.PricingRule.is_active == True,
+                models.PricingRule.id != rule.id,
+            )
+            .first()
+        )
+        if clash:
+            raise HTTPException(
+                400,
+                f"An active {rule.rule_type.value} rule already exists ('{clash.rule_name}', "
+                f"{clash.markup_percentage}%). Deactivate it first.",
+            )
 
     old = {"markup_percentage": str(rule.markup_percentage), "is_active": rule.is_active}
     for field, value in body.model_dump(exclude_none=True).items():

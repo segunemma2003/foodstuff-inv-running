@@ -27,7 +27,15 @@ def _round(value: Decimal) -> int:
 
 
 def get_active_rules(db: Session) -> dict:
-    """Return a dict with active supply, delivery and payment_term rules."""
+    """Return a dict with active supply, delivery, payment_term, and "other" rules.
+
+    supply/delivery are singleton slots (only one row of each type should ever
+    be active — enforced at creation in pricing_rule_service.create_rule).
+    "other" is NOT a singleton: every active "other" rule (cash back, promos,
+    etc.) is collected and applied on top of supply/delivery/payment_term —
+    see calculate_item_price. This is what keeps a newly added rule from ever
+    silently replacing the supply markup again.
+    """
     rules = (
         db.query(models.PricingRule)
         .filter(models.PricingRule.is_active == True)
@@ -37,6 +45,7 @@ def get_active_rules(db: Session) -> dict:
     supply_rule = None
     delivery_rule = None
     payment_term_rules: dict[str, models.PricingRule] = {}
+    other_rules: list[models.PricingRule] = []
 
     for r in rules:
         if r.rule_type == models.PricingRuleType.supply:
@@ -45,11 +54,14 @@ def get_active_rules(db: Session) -> dict:
             delivery_rule = r
         elif r.rule_type == models.PricingRuleType.payment_term and r.payment_term_code:
             payment_term_rules[r.payment_term_code] = r
+        elif r.rule_type == models.PricingRuleType.other:
+            other_rules.append(r)
 
     return {
         "supply": supply_rule,
         "delivery": delivery_rule,
         "payment_terms": payment_term_rules,
+        "other": other_rules,
     }
 
 
@@ -111,7 +123,26 @@ def calculate_item_price(
     wht_pct = WHT_RATE if wht_enabled else Decimal("0")
     wht_amount = _round(cost_price * wht_pct) if wht_enabled else 0
 
-    unit_price = int(cost_price) + supply_amount + delivery_amount + pt_amount + wht_amount
+    # "Other" rules (cash back, promos, ...) — additive on top of everything
+    # above, never a replacement for the supply markup. Multiple can be active
+    # at once; each is applied on cost price and summed.
+    other_rules = rules.get("other") or []
+    other_breakdown = []
+    other_amount = 0
+    for r in other_rules:
+        r_pct = Decimal(str(r.markup_percentage)) / 100
+        r_amount = _round(cost_price * r_pct)
+        other_amount += r_amount
+        other_breakdown.append({
+            "rule_id": r.id,
+            "rule_name": r.rule_name,
+            "pct": float(r_pct * 100),
+            "amount": r_amount,
+        })
+
+    unit_price = (
+        int(cost_price) + supply_amount + delivery_amount + pt_amount + wht_amount + other_amount
+    )
 
     return {
         "supply_markup_pct": float(supply_pct * 100),
@@ -122,5 +153,7 @@ def calculate_item_price(
         "payment_term_markup_amount": pt_amount,
         "wht_markup_pct": float(wht_pct * 100),
         "wht_markup_amount": wht_amount,
+        "other_markup_amount": other_amount,
+        "other_markup_breakdown": other_breakdown,
         "unit_price": unit_price,
     }

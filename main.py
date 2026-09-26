@@ -141,6 +141,7 @@ def run_migrations():
     _exec("ALTER TYPE invoicestatus ADD VALUE IF NOT EXISTS 'completed'", autocommit=True)
     _exec("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'accountant'", autocommit=True)
     _exec("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'operations'", autocommit=True)
+    _exec("ALTER TYPE pricingruletype ADD VALUE IF NOT EXISTS 'other'", autocommit=True)
 
     alters = [
         "ALTER TABLE invoices ALTER COLUMN quotation_id DROP NOT NULL",

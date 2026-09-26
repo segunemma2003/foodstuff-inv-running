@@ -47,6 +47,10 @@ class PricingRuleType(str, enum.Enum):
     supply = "supply"
     delivery = "delivery"
     payment_term = "payment_term"
+    # Additional markups/adjustments (cash back, promos, etc.) that must never
+    # collide with the singleton supply/delivery slots. Multiple "other" rules
+    # can be active at once — they all stack additively. See utils/pricing.py.
+    other = "other"
 
 
 class PaymentMethod(str, enum.Enum):
@@ -125,7 +129,7 @@ class Customer(Base):
     category = Column(String(100))
     default_delivery = Column(SAEnum(DeliveryType), default=DeliveryType.pickup)
     default_payment_term = Column(String(50), default="immediate")
-    credit_limit = Column(BigInteger, default=0, nullable=False)  # kobo — FS Credit assignable from NI
+    credit_limit = Column(BigInteger, default=0)  # kobo — mirrored to FSS FS Credit when linked
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
