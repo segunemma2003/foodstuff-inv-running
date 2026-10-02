@@ -243,6 +243,28 @@ def _date_row(c1_lbl: str, c1_val: str,
     return t
 
 
+def _date_row2(c1_lbl: str, c1_val: str, c2_lbl: str, c2_val: str, styles) -> Table:
+    """Same styling as _date_row but 2 columns — used on the invoice PDF, which
+    has no Delivery Date column (Invoice Date / Due Date only)."""
+    t = Table(
+        [
+            [Paragraph(f"<b>{c1_lbl}</b>", styles["BoldCenter"]),
+             Paragraph(f"<b>{c2_lbl}</b>", styles["BoldCenter"])],
+            [Paragraph(c1_val, styles["Center"]),
+             Paragraph(c2_val, styles["Center"])],
+        ],
+        colWidths=[9 * cm, 9 * cm],
+    )
+    t.setStyle(TableStyle([
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("BOX",           (0, 0), (-1, -1), 0.5, BORDER_GRAY),
+        ("LINEBELOW",     (0, 0), (-1, 0),  0.5, BORDER_GRAY),
+        ("LINEAFTER",     (0, 0), (0, -1),  0.5, BORDER_GRAY),
+    ]))
+    return t
+
+
 def _items_table(items: list, styles, plain_whole_naira: bool = False, wht_enabled: bool = False) -> Table:
     # wht_enabled kept for call-site compat; WHT is baked into unit prices (no separate column).
     _ = wht_enabled
@@ -497,10 +519,9 @@ def generate_invoice_pdf(
     story.append(Spacer(1, 0.15 * cm))
     story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER_GRAY, spaceAfter=8))
 
-    story.append(_date_row(
-        "Invoice Date",  _fmt_date(invoice.invoice_date),
-        "Due Date",      _fmt_date(invoice.due_date),
-        "Delivery Date", _fmt_date(invoice.invoice_date),
+    story.append(_date_row2(
+        "Invoice Date", _fmt_date(invoice.invoice_date),
+        "Due Date",     _fmt_date(invoice.due_date),
         styles,
     ))
     story.append(Spacer(1, 0.4 * cm))
