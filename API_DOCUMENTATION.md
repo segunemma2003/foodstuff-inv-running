@@ -1,49 +1,144 @@
-# Foodstuff Store — Comprehensive API Documentation
+# Foodstuff Store — Quotation & Invoicing API
 
-**Base URL:** `http://localhost:8000/api/v1`  
-**Interactive Docs:** `http://localhost:8000/docs` (Swagger UI)  
-**Auth:** Bearer JWT — include `Authorization: Bearer <token>` on every request except `/auth/login` and the Paystack webhook.
+Internal REST API (FastAPI) for managing customers, products, cost prices, pricing rules, quotations, invoices and payments.
+
+- **Base URL:** `/api/v1` (all paths below are relative to this unless marked otherwise)
+- **Interactive docs:** `/docs` (Swagger UI) and `/redoc`, served by the running app
+- **Content type:** `application/json` unless noted (file uploads use `multipart/form-data`)
 
 ---
 
 ## Table of Contents
 
-1. [Authentication](#1-authentication)
-2. [Users](#2-users)
-3. [Customers](#3-customers)
-4. [Products & Categories](#4-products--categories)
-5. [Cost Prices](#5-cost-prices)
-6. [Pricing Rules](#6-pricing-rules)
-7. [Quotations](#7-quotations)
-8. [Invoices](#8-invoices)
-9. [Payment Accounts](#9-payment-accounts)
-10. [Payments](#10-payments)
-11. [Dashboard](#11-dashboard)
-12. [Analytics](#12-analytics)
-13. [Reports](#13-reports)
-14. [Audit Trail](#14-audit-trail)
-15. [Settings](#15-settings)
-16. [Error Codes](#16-error-codes)
+1. [Conventions](#conventions)
+2. [Roles & Permissions](#roles--permissions)
+3. [Health](#health)
+4. [Auth](#auth)
+5. [Users](#users)
+6. [Customers](#customers)
+7. [Products, Categories & Markets](#products-categories--markets)
+8. [Cost Prices](#cost-prices)
+9. [Pricing Rules](#pricing-rules)
+10. [Quotations](#quotations)
+11. [Invoices](#invoices)
+12. [Payment Accounts](#payment-accounts)
+13. [Payments](#payments)
+14. [Dashboard](#dashboard)
+15. [Analytics](#analytics)
+16. [Reports](#reports)
+17. [Background Jobs](#background-jobs)
+18. [Audit Trail](#audit-trail)
+19. [Settings](#settings)
+20. [Custom Orders](#custom-orders)
+21. [Enums](#enums)
+22. [Pricing Model](#pricing-model)
+23. [Errors](#errors)
+24. [Environment Variables](#environment-variables)
 
 ---
 
-## 1. Authentication
+## Conventions
 
-### POST `/auth/login`
-Authenticate and receive a JWT token.
+### Authentication
+Every endpoint except `/auth/login`, `/auth/forgot-password`, `/auth/reset-password`, `/invoices/template`, the Paystack webhook and the health checks requires a JWT bearer token:
 
-**Request Body:**
-```json
-{
-  "username": "admin",
-  "password": "Admin@12345"
-}
+```
+Authorization: Bearer <access_token>
 ```
 
-**Response `200`:**
+Tokens are HS256 JWTs and expire after `ACCESS_TOKEN_EXPIRE_MINUTES` (default **480** minutes / 8 hours). An inactive user's token is rejected with `401`.
+
+### Money
+**All monetary values are integers in kobo** (₦1 = 100 kobo). For example, `850000` = ₦8,500.00. This applies to cost prices, unit prices, line totals, fees, invoice totals and payment amounts.
+
+### Dates
+- Dates: `YYYY-MM-DD`
+- Datetimes: ISO 8601 (`2026-10-23T14:05:00`)
+
+### Pagination
+List endpoints take `skip` (offset) and `limit` query params. Most return a plain JSON array. Products and invoices return a page object instead:
+
+```json
+{ "total": 312, "skip": 0, "limit": 50, "items": [ ... ] }
+```
+
+### Background jobs
+Heavy work (bulk uploads, report generation, PDF generation) returns `202 Accepted` with:
+
+```json
+{ "task_id": "c1f3...", "status": "queued", "message": "..." }
+```
+
+Poll [`GET /jobs/{task_id}`](#background-jobs) until `status` is `SUCCESS` or `FAILURE`, then fetch any output file from `GET /jobs/{task_id}/download`.
+
+### Bulk delete
+Bulk-delete endpoints take `{ "ids": [1, 2, 3] }` and return:
+
+```json
+{ "deleted": 2, "failed": [ { "id": 3, "reason": "..." } ] }
+```
+
+### Simple message response
+```json
+{ "message": "Human-readable result" }
+```
+
+---
+
+## Roles & Permissions
+
+Roles: `admin`, `manager`, `sales`, `analyst`, `accountant`, `operations`.
+
+Each endpoint below lists the roles it accepts. **Any** means any authenticated, active user. Short names used in this document:
+
+| Label | Roles |
+|---|---|
+| **Any** | Any authenticated user |
+| **Admin** | `admin` |
+| **Admin/Manager** | `admin`, `manager` |
+| **Admin/Manager/Ops** | `admin`, `manager`, `operations` |
+| **Not analyst** | `admin`, `manager`, `sales` |
+| **Customer managers** | `admin`, `manager`, `sales`, `operations` |
+| **Product creators** | `admin`, `manager`, `sales`, `operations` |
+| **Market viewers** | `admin`, `manager`, `sales`, `analyst`, `operations` |
+| **Report roles** | `admin`, `manager`, `analyst` |
+
+> Note: "Not analyst" does **not** include `accountant` or `operations`. It is exactly `admin`, `manager` and `sales`.
+
+A role failure returns `403` with `"Access denied. Required role(s): ..."`.
+
+---
+
+## Health
+
+These are mounted at the root, not under `/api/v1`.
+
+| Method | Path | Auth | Response |
+|---|---|---|---|
+| GET | `/` | None | `{"status": "ok", "message": "Foodstuff Store API is running"}` |
+| GET | `/health` | None | `{"status": "healthy"}` |
+
+---
+
+## Auth
+
+### POST `/auth/login`
+**Auth:** None. **Body:** `application/x-www-form-urlencoded` (OAuth2 password form).
+
+| Field | Type | Required |
+|---|---|---|
+| `username` | string | yes |
+| `password` | string | yes |
+
+```bash
+curl -X POST https://<host>/api/v1/auth/login \
+  -d "username=admin&password=secret"
+```
+
+**200**
 ```json
 {
-  "access_token": "eyJhbGci...",
+  "access_token": "eyJhbGciOi...",
   "token_type": "bearer",
   "user_id": 1,
   "username": "admin",
@@ -51,872 +146,823 @@ Authenticate and receive a JWT token.
 }
 ```
 
----
-
 ### GET `/auth/me`
-Get the currently authenticated user's profile.
-
-**Response `200`:**
-```json
-{
-  "id": 1,
-  "username": "admin",
-  "email": "admin@foodstuffstore.com",
-  "full_name": "System Administrator",
-  "role": "admin",
-  "is_active": true,
-  "created_at": "2024-01-01T00:00:00"
-}
-```
-
----
+**Auth:** Any. Returns the current user (`UserOut`).
 
 ### POST `/auth/change-password`
-Change authenticated user's password.
-
-**Request Body:**
+**Auth:** Any. Changes the caller's own password.
 ```json
-{
-  "current_password": "OldPass@123",
-  "new_password": "NewPass@456"
-}
+{ "current_password": "old", "new_password": "new", "send_email": true }
 ```
-
-**Response `200`:** `{ "message": "Password updated successfully" }`
-
----
 
 ### POST `/auth/forgot-password`
-Initiate a password reset email.
+**Auth:** None. Sends a reset link by email.
+```json
+{ "email": "user@example.com" }
+```
 
-**Request Body:** `{ "email": "user@example.com" }`
+### POST `/auth/reset-password`
+**Auth:** None. Completes a reset using the token from the email.
+```json
+{ "token": "<reset-token>", "new_password": "new" }
+```
 
 ---
 
-## 2. Users
+## Users
 
-> Admin-only for create/update/delete. All authenticated users can read.
-
-### GET `/users`
-List all users.
-
-**Query Params:** `role`, `is_active` (bool), `skip`, `limit`
-
-### POST `/users` `[Admin]`
-Create a user.
-
-**Request Body:**
+**UserOut**
 ```json
 {
-  "username": "jane",
-  "email": "jane@store.com",
-  "full_name": "Jane Doe",
-  "password": "SecurePass@1",
-  "role": "sales"
+  "id": 3, "username": "jdoe", "email": "jdoe@example.com",
+  "full_name": "Jane Doe", "role": "sales", "is_active": true,
+  "created_at": "2026-05-01T09:00:00"
 }
 ```
 
-### GET `/users/{user_id}`
-Get a single user.
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/users` | Admin/Manager | List users. Query: `skip`, `limit` (50), `role`, `is_active` |
+| POST | `/users` | Admin | Create user |
+| GET | `/users/{user_id}` | Admin/Manager | Get user |
+| PUT | `/users/{user_id}` | Admin | Update user |
+| DELETE | `/users/{user_id}` | Admin | Deactivate user (soft delete) |
+| POST | `/users/{user_id}/reset-password` | Admin | Set a new password for a user |
+| POST | `/users/{user_id}/change-password` | Admin | Same body and behaviour as reset-password |
 
-### PUT `/users/{user_id}` `[Admin]`
-Update a user's email, name, role, or active status.
+**Create body**
+```json
+{
+  "username": "jdoe", "email": "jdoe@example.com", "full_name": "Jane Doe",
+  "password": "secret", "role": "sales"
+}
+```
+`role` defaults to `sales`.
 
-### DELETE `/users/{user_id}` `[Admin]`
-Deactivate a user (soft delete).
+**Update body** (all optional): `email`, `full_name`, `role`, `is_active`.
+
+**Reset/change password body**
+```json
+{ "new_password": "secret", "send_email": true }
+```
 
 ---
 
-## 3. Customers
+## Customers
 
-### GET `/customers`
-List customers.
-
-**Query Params:** `search` (name/email/phone), `category`, `is_active`, `skip`, `limit`
-
-### POST `/customers` `[Sales+]`
-Create a customer.
-
-**Request Body:**
+**CustomerOut**
 ```json
 {
-  "customer_name": "Ade Foods Ltd",
-  "business_name": "Ade Foods",
+  "id": 12, "customer_name": "Ade Foods", "business_name": "Ade Foods Ltd",
+  "phone": "08012345678", "email": "ade@example.com", "address": "1 Market Rd",
+  "city": "Lagos", "category": "Restaurant",
+  "default_delivery": "pickup", "default_payment_term": "immediate",
+  "credit_limit": 0, "is_active": true,
+  "created_at": "2026-03-10T10:00:00", "last_order_date": "2026-10-20"
+}
+```
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/customers` | Any | List. Query: `skip`, `limit` (50), `search`, `category`, `is_active` |
+| GET | `/customers/dropdown` | Any | Minimal list for selects: `[{id, customer_name, business_name}]` |
+| POST | `/customers` | Customer managers | Create |
+| GET | `/customers/{customer_id}` | Any | Get one |
+| PUT | `/customers/{customer_id}` | Customer managers | Update |
+| DELETE | `/customers/{customer_id}` | Admin | Delete. Returns `400` if the customer has any invoices or quotations |
+| GET | `/customers/{customer_id}/quotations` | Any | Query: `skip`, `limit` (20). Returns `QuotationOut[]` |
+| GET | `/customers/{customer_id}/invoices` | Any | Query: `skip`, `limit` (200), `date_from`, `date_to`. Returns `InvoiceOut[]` |
+| GET | `/customers/{customer_id}/analytics` | Any | `CustomerOut` plus totals (see below) |
+| GET | `/customers/{customer_id}/top-products` | Any | Query: `limit` (10), `date_from`, `date_to` |
+| GET | `/customers/{customer_id}/cost-of-sales` | Any | Query: `date_from`, `date_to` |
+| POST | `/customers/bulk-update` | Customer managers | CSV bulk update (see below) |
+
+**Create body**
+```json
+{
+  "customer_name": "Ade Foods",
   "phone": "08012345678",
-  "email": "ade@adefoods.com",
-  "address": "12 Market Street",
+  "business_name": "Ade Foods Ltd",
+  "email": "ade@example.com",
+  "address": "1 Market Rd",
   "city": "Lagos",
-  "category": "Wholesale",
-  "default_delivery": "delivery",
-  "default_payment_term": "net_30"
+  "category": "Restaurant",
+  "default_delivery": "pickup",
+  "default_payment_term": "immediate",
+  "credit_limit": 0
 }
 ```
+Required: `customer_name`, `phone`. The update body takes the same fields, all optional, plus `is_active`.
 
-**Response `201`:** Customer object.
+**Analytics extra fields:** `total_sales_value`, `total_quantity_bought`, `total_orders`, `average_order_value`, `preferred_payment_term`, `preferred_delivery_type`, `cost_of_sales`.
 
-### GET `/customers/{customer_id}`
-Get customer details.
+### POST `/customers/bulk-update`
+`multipart/form-data` with field `file` (a CSV file, UTF-8, BOM allowed).
 
-### PUT `/customers/{customer_id}` `[Sales+]`
-Update customer.
+- Each row is matched to an existing customer by `email`, then `phone`, then `customer_name` (case-insensitive).
+- Columns that can be updated: `customer_name`, `business_name`, `phone`, `email`, `address`, `city`, `category`, `default_delivery`, `default_payment_term`.
+- Empty cells are ignored, so they never overwrite existing values.
 
-### DELETE `/customers/{customer_id}` `[Sales+]`
-Deactivate customer.
-
-### GET `/customers/{customer_id}/quotations`
-All quotations for a customer.
-
-### GET `/customers/{customer_id}/invoices`
-All invoices for a customer.
-
-### GET `/customers/{customer_id}/analytics`
-Customer analytics (total sales, avg order value, preferred payment term, etc.).
-
-### GET `/customers/{customer_id}/top-products`
-Top 10 products bought by this customer.
+**200**
+```json
+{ "updated": 40, "not_found": 2, "skipped": 1, "errors": ["Row 7: no match for ..."] }
+```
+At most the first 20 errors are returned.
 
 ---
 
-## 4. Products & Categories
+## Products, Categories & Markets
 
-### GET `/products/categories`
-List all product categories.
-
-### POST `/products/categories` `[Admin/Manager]`
-Create a category.
-
-**Request Body:** `{ "name": "Grains", "description": "Rice, beans, etc." }`
-
-### GET `/products`
-List products.
-
-**Query Params:** `search`, `category_id`, `is_active`, `skip`, `limit`
-
-**Response includes** `current_cost_price` and `cost_price_effective_date` for each product.
-
-### POST `/products` `[Sales+]`
-Create a product.
-
-**Request Body:**
+**ProductOut**
 ```json
 {
-  "product_name": "Basmati Rice 50kg",
-  "sku": "RICE-50KG",
+  "id": 55, "product_name": "Rice (50kg)", "sku": "RICE-50",
   "unit_of_measure": "bag",
-  "category_id": 1
+  "category_id": 2, "category": { "id": 2, "name": "Grains", "description": null, "is_active": true },
+  "market_id": 1, "market": { "id": 1, "name": "Mile 12", "description": null, "is_active": true },
+  "market_name": "Mile 12",
+  "image_url": "https://...", "is_active": true,
+  "created_at": "2026-01-05T08:00:00",
+  "current_cost_price": 6500000, "cost_price_effective_date": "2026-10-01"
 }
 ```
 
-### GET `/products/{product_id}`
-Get product with current cost price.
+### Categories
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/products/categories` | Market viewers | List categories |
+| POST | `/products/categories` | Admin/Manager/Ops | Create. Body: `{ "name": "...", "description": "..." }` |
+| PUT | `/products/categories/{category_id}` | Admin/Manager | Update. Body (all optional): `name`, `description`, `is_active` |
+| DELETE | `/products/categories/{category_id}` | Admin | Delete. Returns `204` |
 
-### PUT `/products/{product_id}` `[Sales+]`
-Update product.
+### Markets
+Markets use the same request and response shapes as categories.
 
-### DELETE `/products/{product_id}` `[Sales+]`
-Deactivate product.
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/products/markets` | Market viewers | List markets |
+| POST | `/products/markets` | Admin/Manager/Ops | Create |
+| PUT | `/products/markets/{market_id}` | Admin/Manager/Ops | Update |
+| DELETE | `/products/markets/{market_id}` | Admin/Manager/Ops | Delete. Returns `204` |
+| POST | `/products/markets/{market_id}/disable` | Admin/Manager/Ops | Disable |
+| POST | `/products/markets/{market_id}/enable` | Admin/Manager/Ops | Enable |
 
-### GET `/products/{product_id}/cost-history`
-Full cost price history for a product.
+### Products
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/products` | Any | Paginated list (`items`, `total`). Query: `skip`, `limit` (50), `search`, `category_id`, `market_id`, `is_active`, `include_inactive` (default `false`) |
+| POST | `/products` | Product creators | Create |
+| GET | `/products/{product_id}` | Any | Get one |
+| PUT | `/products/{product_id}` | Product creators | Update |
+| POST | `/products/{product_id}/disable` | Product creators | Deactivate |
+| POST | `/products/{product_id}/enable` | Product creators | Reactivate |
+| DELETE | `/products/{product_id}` | Admin | Delete |
+| GET | `/products/{product_id}/variants` | Any | Same product name in the same market with a different unit: `[{id, product_name, unit_of_measure, sku}]`. Used to pick a UOM on quotations |
+| GET | `/products/{product_id}/cost-history` | Any | `CostPriceOut[]` |
+| GET | `/products/{product_id}/analytics` | Any | `product_id`, `product_name`, `total_quantity_sold`, `total_revenue`, `total_customers`, `total_invoices`, `top_customers`, `monthly_trend` |
+| POST | `/products/{product_id}/image` | Not analyst | Upload image (`multipart/form-data`, field `file`) |
+| DELETE | `/products/{product_id}/image` | Not analyst | Remove image |
+| GET | `/products/template` | Any | Excel template for bulk upload (see the note below) |
+| POST | `/products/bulk-upload` | Admin/Manager/Ops | `multipart/form-data`: `file` (Excel), optional `market_id`. Returns `202` with a job |
 
-### GET `/products/{product_id}/analytics`
-Product analytics (qty sold, revenue, top customers, monthly trend).
+**Create body**
+```json
+{ "product_name": "Rice (50kg)", "sku": "RICE-50", "unit_of_measure": "bag", "category_id": 2, "market_id": 1 }
+```
+Only `product_name` is required. The update body takes the same fields, all optional, plus `is_active`.
 
-### POST `/products/bulk-upload` `[Sales+]`
-Upload products from Excel (`multipart/form-data`, field: `file`).
-
-Required columns: `product_name`, `sku`, `unit_of_measure`, `category_name`.
+> ⚠️ **Known issue:** `GET /products/template` is declared after `GET /products/{product_id}`. As a result, the request currently matches the `{product_id}` route and returns `422`. The fix is to move the template route above `/{product_id}` in `routers/products.py`.
 
 ---
 
-## 5. Cost Prices
+## Cost Prices
 
-### GET `/cost-prices`
-List cost prices. **Query Params:** `product_id`
-
-### POST `/cost-prices` `[Sales+]`
-Add a cost price record.
-
-**Request Body:**
+**CostPriceOut**
 ```json
 {
-  "product_id": 3,
-  "cost_price": 45000.00,
-  "effective_date": "2024-06-01",
-  "notes": "New supplier rate"
+  "id": 901, "product_id": 55, "cost_price": 6500000,
+  "effective_date": "2026-10-01", "notes": null,
+  "created_by": 1, "created_at": "2026-10-01T07:30:00"
 }
 ```
 
-### PUT `/cost-prices/{cp_id}` `[Sales+]`
-Update a cost price record.
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/cost-prices` | Any | Query: `product_id`, `skip`, `limit` (100) |
+| POST | `/cost-prices` | Admin/Manager/Ops | Add a cost price |
+| PUT | `/cost-prices/{cp_id}` | Admin/Manager/Ops | Update. Body (all optional): `cost_price`, `effective_date`, `notes` |
+| POST | `/cost-prices/bulk-upload` | Admin/Manager/Ops | Excel upload. Returns `202` with a job |
+| GET | `/cost-prices/template` | Any | Download the Excel template |
 
-### POST `/cost-prices/bulk-upload` `[Sales+]`
-Upload cost prices from Excel.
+**Create body**
+```json
+{ "product_id": 55, "cost_price": 6500000, "effective_date": "2026-10-01", "notes": "New supplier" }
+```
 
-Required columns: `sku`, `cost_price`, `effective_date`. Optional: `notes`.
-
-### GET `/cost-prices/template`
-Download the Excel template for bulk upload.
+**Bulk upload columns (required):** `product_name`, `uom`, `market_name`, `cost_price`.
+- The effective date is set to today.
+- Rows with a missing required field are skipped.
+- Scanning stops after three blank rows in a row.
+- Existing products are never moved to a different market.
 
 ---
 
-## 6. Pricing Rules
+## Pricing Rules
 
-### GET `/pricing-rules`
-List rules. **Query Params:** `is_active`
-
-### POST `/pricing-rules` `[Admin/Manager]`
-Create a pricing rule.
-
-**Request Body:**
+**PricingRuleOut**
 ```json
 {
-  "rule_name": "Net 15 Markup",
+  "id": 1, "rule_name": "Supply Markup", "rule_type": "supply",
+  "markup_percentage": "5.0", "payment_term_code": null,
+  "is_active": true, "effective_date": "2026-01-01",
+  "created_by": 1, "updated_by": 1,
+  "created_at": "2026-01-01T00:00:00", "updated_at": "2026-01-01T00:00:00"
+}
+```
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/pricing-rules` | Any | Query: `is_active`, `rule_type` |
+| POST | `/pricing-rules` | Admin/Manager/Ops | Create |
+| GET | `/pricing-rules/{rule_id}` | Any | Get one |
+| PUT | `/pricing-rules/{rule_id}` | Admin/Manager/Ops | Update. Body (all optional): `rule_name`, `markup_percentage`, `payment_term_code`, `effective_date`, `is_active` |
+| DELETE | `/pricing-rules/{rule_id}` | Admin | Delete |
+| POST | `/pricing-rules/bulk-delete` | Admin | Bulk delete |
+
+**Create body**
+```json
+{
+  "rule_name": "Net 30 Markup",
   "rule_type": "payment_term",
-  "markup_percentage": 2.0,
-  "payment_term_code": "net_15",
-  "is_active": true,
-  "effective_date": "2024-01-01"
-}
-```
-`rule_type` values: `supply`, `delivery`, `payment_term`
-
-### GET `/pricing-rules/{rule_id}`
-Get a rule.
-
-### PUT `/pricing-rules/{rule_id}` `[Admin/Manager]`
-Update a rule.
-
-### DELETE `/pricing-rules/{rule_id}` `[Admin/Manager]`
-Delete a rule.
-
----
-
-## 7. Quotations
-
-### POST `/quotations/calculate-price`
-Preview pricing for items without saving.
-
-**Request Body:**
-```json
-{
-  "product_id": 3,
-  "quantity": 10,
-  "delivery_type": "delivery",
-  "payment_term": "net_30"
-}
-```
-
-**Response:**
-```json
-{
-  "product_id": 3,
-  "product_name": "Basmati Rice 50kg",
-  "quantity": 10,
-  "cost_price": 45000.00,
-  "supply_markup_pct": 5.0,
-  "supply_markup_amount": 2250.00,
-  "delivery_markup_pct": 3.0,
-  "delivery_markup_amount": 1350.00,
-  "payment_term_markup_pct": 3.5,
-  "payment_term_markup_amount": 1701.00,
-  "unit_price": 50301.00,
-  "line_total": 503010.00
-}
-```
-
-### GET `/quotations`
-List quotations.
-
-**Query Params:** `status`, `customer_id`, `created_by`, `date_from`, `date_to`, `skip`, `limit`
-
-`status` values: `draft`, `pending_approval`, `approved`, `rejected`, `converted`
-
-### POST `/quotations` `[Sales+]`
-Create a quotation.
-
-**Request Body:**
-```json
-{
-  "customer_id": 1,
-  "quotation_date": "2024-06-15",
-  "delivery_type": "delivery",
-  "payment_term": "net_30",
-  "notes": "Urgent order",
-  "items": [
-    { "product_id": 3, "quantity": 10 },
-    { "product_id": 5, "quantity": 5 }
-  ]
-}
-```
-
-### GET `/quotations/{quotation_id}`
-Get quotation with all items and pricing breakdown.
-
-### PUT `/quotations/{quotation_id}` `[Sales+]`
-Update a draft quotation (items and terms are recalculated).
-
-### POST `/quotations/{quotation_id}/submit`
-Submit a draft quotation for approval (draft → pending_approval).
-
-### POST `/quotations/{quotation_id}/approve` `[Admin/Manager]`
-Approve a quotation (pending_approval → approved).
-
-### POST `/quotations/{quotation_id}/reject` `[Admin/Manager]`
-Reject a quotation with a reason.
-
-**Request Body:** `{ "reason": "Price margin too low" }`
-
-### GET `/quotations/{quotation_id}/pdf`
-Download quotation PDF.
-
-### POST `/quotations/{quotation_id}/convert-to-invoice`
-Convert approved quotation to an invoice.
-
----
-
-## 8. Invoices
-
-### GET `/invoices/approved-quotations`
-List approved quotations that have not yet been converted to invoices.
-
-**Query Params:** `customer_id`
-
-### GET `/invoices`
-List invoices.
-
-**Query Params:** `customer_id`, `status`, `created_by`, `date_from`, `date_to`, `payment_term`, `delivery_type`, `skip`, `limit`
-
-**Invoice `status` values:**
-
-| Status           | Meaning                                                    |
-|------------------|------------------------------------------------------------|
-| `active`         | Invoice created, no payment recorded yet                   |
-| `partially_paid` | Some payments confirmed, balance still outstanding         |
-| `paid`           | Full invoice amount received via confirmed payments        |
-| `cancelled`      | Invoice cancelled (no further payments accepted)           |
-
-**Response includes `amount_paid` field** showing total confirmed payments.
-
-### GET `/invoices/{invoice_id}`
-Get invoice with items, customer, creator, linked quotation. Includes `amount_paid`.
-
-### GET `/invoices/{invoice_id}/pdf`
-Download invoice PDF.
-
-### POST `/invoices/{invoice_id}/cancel` `[Admin/Manager]`
-Cancel an invoice.
-
----
-
-## 9. Payment Accounts
-
-Saved company bank accounts. Customers transfer money to these accounts.
-
-### GET `/payment-accounts`
-List active payment accounts.
-
-**Query Params:** `active_only` (bool, default `true`)
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "account_name": "Foodstuff Store Ltd",
-    "bank_name": "GTBank",
-    "account_number": "0123456789",
-    "account_type": "current",
-    "description": "Main operating account",
-    "is_active": true,
-    "is_default": true,
-    "created_by": 1,
-    "created_at": "2024-01-01T00:00:00"
-  }
-]
-```
-
-### POST `/payment-accounts` `[Admin/Manager]`
-Add a new bank account.
-
-**Request Body:**
-```json
-{
-  "account_name": "Foodstuff Store Ltd",
-  "bank_name": "GTBank",
-  "account_number": "0123456789",
-  "account_type": "current",
-  "description": "Main operating account",
-  "is_default": true
-}
-```
-
-> Setting `is_default: true` automatically clears the previous default.
-
-### GET `/payment-accounts/{account_id}`
-Get a specific payment account.
-
-### PUT `/payment-accounts/{account_id}` `[Admin/Manager]`
-Update an account. All fields are optional.
-
-**Request Body:**
-```json
-{
-  "account_name": "Foodstuff Store (New Name)",
-  "is_default": true,
+  "markup_percentage": 3.5,
+  "payment_term_code": "net_30",
+  "effective_date": "2026-10-23",
   "is_active": true
 }
 ```
 
-### DELETE `/payment-accounts/{account_id}` `[Admin/Manager]`
-Deactivate an account (soft delete). Existing payment records are not affected.
+**Rules enforced on create:**
+- `payment_term` rules require `payment_term_code`. Missing it returns `400`.
+- Only **one active** `supply` rule and **one active** `delivery` rule may exist at a time. Creating a second one returns `400`.
+- Only one active `payment_term` rule may exist per `payment_term_code`.
+- `other` rules have no such limit. They add on top of the other markups (cash back, promotions and similar). See [Pricing Model](#pricing-model).
+
+**Seeded payment-term codes:** `immediate`, `net_3`, `net_5`, `net_7`, `net_15`, `net_30`, `net_45`, `net_60`, `net_90`.
 
 ---
 
-## 10. Payments
+## Quotations
 
-Two payment channels: **Bank Transfer** and **Paystack**.
+Lifecycle: `draft` → `pending_approval` → `approved` | `rejected` → `converted` (once turned into an invoice).
 
----
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/quotations/calculate-price` | Any | Preview line pricing without saving anything |
+| GET | `/quotations` | Any | List (`QuotationListOut[]`). Query: `skip`, `limit` (50), `status`, `customer_id`, `created_by`, `date_from`, `date_to` |
+| POST | `/quotations` | Not analyst | Create (status `draft`) |
+| GET | `/quotations/{quotation_id}` | Any | Full quotation with items |
+| PUT | `/quotations/{quotation_id}` | Not analyst | Update. Lines are repriced when items, payment term, delivery type or WHT change |
+| DELETE | `/quotations/{quotation_id}` | Admin | Delete |
+| POST | `/quotations/bulk-delete` | Admin | Bulk delete |
+| POST | `/quotations/{quotation_id}/submit` | Not analyst | `draft` → `pending_approval` |
+| POST | `/quotations/{quotation_id}/approve` | Admin/Manager/Ops | Approve |
+| POST | `/quotations/{quotation_id}/reject` | Admin/Manager/Ops | Reject. Body: `{ "reason": "..." }` |
+| GET | `/quotations/{quotation_id}/pdf` | Any | Download PDF |
+| POST | `/quotations/{quotation_id}/generate-pdf` | Any | Generate the PDF in the background. Returns `202` with a job |
+| POST | `/quotations/{quotation_id}/send-to-customer` | Not analyst | Email the quotation to the customer |
+| POST | `/quotations/{quotation_id}/upload-to-make` | Not analyst | Push to the Make automation. Body: `{ "additional_emails": ["a@b.com"] }` (optional) |
+| POST | `/quotations/{quotation_id}/convert-to-invoice` | Not analyst | Create an invoice from an approved quotation. Returns `InvoiceOut` |
 
-### GET `/payments`
-List payment records.
+### POST `/quotations/calculate-price`
+**Body:** an array of lines.
+```json
+[
+  { "product_id": 55, "quantity": 10, "delivery_type": "delivery", "payment_term": "net_30", "apply_wht": false }
+]
+```
+**200**
+```json
+[
+  {
+    "product_id": 55, "product_name": "Rice (50kg)", "quantity": 10.0,
+    "cost_price": 6500000,
+    "supply_markup_pct": 5.0, "supply_markup_amount": 325000,
+    "delivery_markup_pct": 3.0, "delivery_markup_amount": 195000,
+    "payment_term_markup_pct": 3.5, "payment_term_markup_amount": 227500,
+    "wht_markup_pct": 0.0, "wht_markup_amount": 0,
+    "unit_price": 7247500, "line_total": 72475000
+  }
+]
+```
 
-**Query Params:** `invoice_id`, `status`, `payment_method`, `skip`, `limit`
-
-`status` values: `pending`, `confirmed`, `failed`, `voided`  
-`payment_method` values: `bank_transfer`, `paystack`, `cash`, `cheque`
-
----
-
-### GET `/payments/invoice/{invoice_id}/summary`
-Full payment summary for an invoice.
-
-**Response:**
+### POST `/quotations`
 ```json
 {
-  "invoice_id": 12,
-  "invoice_number": "INV-0012",
-  "total_amount": 503010.00,
-  "amount_paid": 200000.00,
-  "balance_due": 303010.00,
-  "payment_status": "partially_paid",
-  "payments": [
+  "customer_id": 12,
+  "quotation_date": "2026-10-23",
+  "delivery_type": "delivery",
+  "payment_term": "net_30",
+  "notes": "Deliver before noon",
+  "delivery_fee": 500000,
+  "apply_handling_charge": true,
+  "apply_vat": false,
+  "apply_wht": false,
+  "other_rule_ids": [7],
+  "items": [
+    { "product_id": 55, "quantity": 10, "uom": "bag", "unit_price_override": null, "discount_pct": 2.5 }
+  ]
+}
+```
+- `unit_price_override` (kobo): if set, the server uses this price and skips the markup calculation for that line.
+- `discount_pct`: a percentage discount applied after the unit price is calculated.
+- `other_rule_ids`: **inactive** `other` pricing rules to apply to this quotation only. See [Pricing Model](#pricing-model).
+
+**Update body** (all optional): `delivery_type`, `payment_term`, `notes`, `apply_wht`, `other_rule_ids`, `items`.
+
+**QuotationOut** (abridged)
+```json
+{
+  "id": 88, "quotation_number": "QUO-000088",
+  "customer_id": 12, "customer": { "...": "CustomerOut" }, "customer_name": "Ade Foods",
+  "quotation_date": "2026-10-23", "delivery_type": "delivery", "payment_term": "net_30",
+  "status": "draft", "notes": "...",
+  "delivery_fee": 500000,
+  "handling_charge_enabled": true, "handling_charge_amount": 3623750,
+  "vat_enabled": false, "vat_amount": 0,
+  "wht_enabled": false,
+  "extra_charges": [ { "rule_id": 7, "name": "Promo", "pct": 1.0, "amount": 724750 } ],
+  "extra_charges_amount": 724750,
+  "total_amount": 77323500,
+  "created_by": 3, "creator": { "...": "UserOut" }, "created_by_name": "Jane Doe",
+  "approved_by": null, "approver": null, "approved_at": null, "rejection_reason": null,
+  "created_at": "...", "updated_at": "...",
+  "items": [
     {
-      "id": 3,
-      "invoice_id": 12,
-      "amount": 200000.00,
-      "payment_method": "bank_transfer",
-      "payment_account_id": 1,
-      "payer_name": "Ade Foods",
-      "payment_date": "2024-06-20",
-      "status": "confirmed",
-      "confirmed_at": "2024-06-20T14:22:00",
-      "created_at": "2024-06-20T12:00:00"
+      "id": 1, "product_id": 55, "product": { "...": "ProductOut" }, "product_name": "Rice (50kg)",
+      "quantity": "10", "uom": "bag", "cost_price": 6500000,
+      "supply_markup_pct": "5", "supply_markup_amount": 325000,
+      "delivery_markup_pct": "3", "delivery_markup_amount": 195000,
+      "payment_term_markup_pct": "3.5", "payment_term_markup_amount": 227500,
+      "discount_pct": "0", "unit_price": 7247500, "line_total": 72475000
     }
   ]
 }
 ```
+`QuotationListOut` has the same top-level fields but leaves out `customer`, `creator`, `approver`, `approved_by`, `rejection_reason` and `items`.
 
 ---
 
-### GET `/payments/{payment_id}`
-Get a single payment record.
+## Invoices
 
----
+Statuses: `active`, `partially_paid`, `paid`, `completed`, `cancelled`. Payment status updates automatically as payments are confirmed.
 
-### POST `/payments/bank-transfer` `[All authenticated]`
-Record a bank transfer payment (pending confirmation).
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/invoices/approved-quotations` | Any | Approved quotations that can be converted. Query: `customer_id` |
+| GET | `/invoices` | Any | Paginated list (`items`, `total`). Query: `skip`, `limit` (50), `customer_id`, `status`, `created_by`, `date_from`, `date_to`, `payment_term`, `delivery_type` |
+| POST | `/invoices` | Not analyst | Create an invoice directly, without a quotation |
+| GET | `/invoices/{invoice_id}` | Any | Full invoice |
+| PUT | `/invoices/{invoice_id}` | Admin | Edit an invoice |
+| DELETE | `/invoices/{invoice_id}` | Any | Delete |
+| POST | `/invoices/bulk-delete` | Any | Bulk delete |
+| POST | `/invoices/{invoice_id}/cancel` | Admin/Manager | Cancel |
+| GET | `/invoices/{invoice_id}/pdf` | Any | Download the invoice PDF (an uploaded custom PDF if one exists) |
+| GET | `/invoices/{invoice_id}/signed-pdf` | Any | Download the signed copy |
+| GET | `/invoices/{invoice_id}/cost-of-sales/pdf` | Any | Download the cost-of-sales PDF for this invoice |
+| POST | `/invoices/{invoice_id}/generate-pdf` | Any | Generate the PDF in the background. Returns `202` with a job |
+| POST | `/invoices/{invoice_id}/upload-pdf` | Any | Replace the generated PDF with your own. `multipart/form-data`: `file`, optional `additional_emails` (comma-separated string) |
+| DELETE | `/invoices/{invoice_id}/upload-pdf` | Any | Remove the custom PDF |
+| POST | `/invoices/{invoice_id}/upload-signed` | Any | Upload a signed copy. `multipart/form-data`: `file`, optional `additional_emails` |
+| POST | `/invoices/{invoice_id}/send-email` | Any | Email the invoice. Body: `{ "additional_emails": ["a@b.com"] }` (optional) |
+| POST | `/invoices/{invoice_id}/upload-to-make` | Any | Push to the Make automation. Same body as send-email |
+| GET | `/invoices/template` | **None** | Excel template for bulk upload |
+| POST | `/invoices/bulk-upload` | Not analyst | Excel upload. Returns `202` with a job |
 
-**Request Body:**
+### POST `/invoices`
 ```json
 {
-  "invoice_id": 12,
-  "amount": 200000.00,
-  "payment_account_id": 1,
-  "payment_date": "2024-06-20",
-  "payer_name": "Ade Foods",
-  "notes": "Transfer ref: ADE/2024/001"
+  "customer_id": 12,
+  "invoice_date": "2026-10-23",
+  "due_date": "2026-11-22",
+  "payment_term": "net_30",
+  "delivery_type": "pickup",
+  "notes": null,
+  "apply_handling_charge": true,
+  "apply_wht": false,
+  "other_rule_ids": [],
+  "items": [
+    { "product_id": 55, "quantity": 10, "uom": "bag", "unit_price": null }
+  ]
+}
+```
+- `payment_term` defaults to `cash` and `delivery_type` defaults to `pickup`.
+- Item `unit_price` (kobo) is optional. If omitted, the server calculates it from the cost price plus markups. `unit_price_override` is accepted as an alias.
+- At least one item is required.
+
+**Update body** (Admin; all optional): `customer_id`, `invoice_date`, `due_date`, `payment_term`, `delivery_type`, `notes`, `apply_handling_charge`, `apply_wht`, `other_rule_ids`, `items`. Changing `apply_wht` reprices every line from its cost price.
+
+**InvoiceOut** has the same fields as `QuotationOut`, with these differences:
+- Uses `invoice_number`, `invoice_date` and `due_date`.
+- Adds `quotation_id`, `quotation` (the source `QuotationOut`, if any), `amount_paid` and `custom_pdf_s3_key`.
+- Has no approval or rejection fields.
+
+`InvoiceListOut` (in list `items`) is the light version: no nested `customer`, `creator`, `items` or `quotation`.
+
+### Bulk upload columns
+Download the template with `GET /invoices/template`.
+
+| Column | Required | Notes |
+|---|---|---|
+| `invoice_number` | no | Leave blank to auto-generate. Rows with the same value become one invoice |
+| `customer_name` | yes | Must match an existing customer (case-insensitive) |
+| `invoice_date` | yes | `YYYY-MM-DD` |
+| `due_date` | no | `YYYY-MM-DD` |
+| `payment_term` | no | `cash`, `immediate`, `net_7`, `net_14`, `net_30`, `net_45`, `net_60`, `net_90`. Default `cash` |
+| `delivery_type` | no | `delivery` or `pickup`. Default `pickup` |
+| `product_name` | yes | Must match an existing product (case-insensitive) |
+| `qty` | yes | Must be greater than 0 |
+| `unit_price` | yes | Numbers only |
+| `notes` | no | |
+
+---
+
+## Payment Accounts
+
+These are the company's own bank accounts that customers pay into.
+
+**PaymentAccountOut**
+```json
+{
+  "id": 1, "account_name": "Foodstuff Store Ltd", "bank_name": "GTBank",
+  "account_number": "0123456789", "account_type": "current",
+  "description": null, "is_active": true, "is_default": true,
+  "created_by": 1, "created_at": "..."
 }
 ```
 
-**Response `201`:** Payment object with `status: "pending"`.
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/payment-accounts` | Any | Query: `active_only` (default `true`) |
+| POST | `/payment-accounts` | Admin/Manager | Create. Setting `is_default: true` removes the default flag from the previous default account |
+| GET | `/payment-accounts/{account_id}` | Any | Get one |
+| PUT | `/payment-accounts/{account_id}` | Admin/Manager | Update. Body (all optional): any create field plus `is_active` |
+| DELETE | `/payment-accounts/{account_id}` | Admin | Deactivate (soft delete). Returns the account |
 
-**Rules:**
-- Invoice must not be cancelled or fully paid.
-- `payment_account_id` must be an active saved account.
-- Amount must be greater than zero.
-
----
-
-### PUT `/payments/{payment_id}/confirm` `[Admin/Manager]`
-Confirm a pending bank-transfer payment after verifying the bank alert.
-
-**Response `200`:** Updated payment with `status: "confirmed"`.
-
-**Side effects:**
-- Invoice `amount_paid` is recalculated.
-- Invoice status is updated (`partially_paid` or `paid`).
-- Confirmation email is sent to customer if they have an email on file.
+**Create body**
+```json
+{
+  "account_name": "Foodstuff Store Ltd", "bank_name": "GTBank",
+  "account_number": "0123456789", "account_type": "current",
+  "description": "Main collections", "is_default": true
+}
+```
 
 ---
 
-### PUT `/payments/{payment_id}/void` `[Admin/Manager]`
-Void a pending or confirmed payment.
+## Payments
 
-**Response `200`:** Updated payment with `status: "voided"`.
+**PaymentOut**
+```json
+{
+  "id": 7, "invoice_id": 42, "invoice_number": "INV-000042",
+  "amount": "20000000", "payment_method": "bank_transfer",
+  "payment_account_id": 1, "payment_account": { "...": "PaymentAccountOut" },
+  "payer_name": "Ade Foods",
+  "paystack_reference": null, "paystack_payment_url": null,
+  "payment_date": "2026-10-23", "status": "pending", "notes": "Trf ref ADE001",
+  "recorded_by": 3, "confirmed_by": null, "confirmed_at": null,
+  "created_at": "..."
+}
+```
 
-**Side effects:** Invoice amount_paid and status are recalculated.
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/payments` | Any | Query: `invoice_id`, `status`, `payment_method`, `skip`, `limit` (50) |
+| GET | `/payments/{payment_id}` | Any | Get one |
+| GET | `/payments/{payment_id}/receipt` | Any | Download the receipt PDF |
+| GET | `/payments/invoice/{invoice_id}/summary` | Any | Balance summary for an invoice (see below) |
+| POST | `/payments/bank-transfer` | Any | Record a bank transfer. Status starts as `pending` |
+| PUT | `/payments/{payment_id}/confirm` | Admin/Manager | Confirm a payment. Recalculates `amount_paid` and status on the invoice |
+| PUT | `/payments/{payment_id}/void` | Admin/Manager | Void a payment |
+| DELETE | `/payments/{payment_id}` | Admin | Delete |
+| POST | `/payments/bulk-delete` | Admin | Bulk delete |
+| POST | `/payments/paystack/initialize` | Any | Create a Paystack payment link |
+| POST | `/payments/paystack/send-link` | Any | Email the Paystack link to the customer. Body: `{ "payment_id": 7 }` |
+| GET | `/payments/paystack/verify/{reference}` | Any | Check a Paystack transaction and confirm the payment if it succeeded |
+| POST | `/payments/paystack/webhook` | Paystack signature | Paystack callback. Verified with the `x-paystack-signature` header. Hidden from Swagger |
 
----
+### POST `/payments/bank-transfer`
+```json
+{
+  "invoice_id": 42,
+  "amount": 20000000,
+  "payment_account_id": 1,
+  "payment_date": "2026-10-23",
+  "payer_name": "Ade Foods",
+  "notes": "Trf ref ADE001"
+}
+```
+`amount` must be greater than 0.
 
 ### POST `/payments/paystack/initialize`
-Generate a Paystack payment link for an invoice.
-
-**Request Body:**
 ```json
-{
-  "invoice_id": 12,
-  "amount": 303010.00
-}
+{ "invoice_id": 42, "amount": null }
 ```
-> Omit `amount` to default to the full outstanding balance.
+- `amount` defaults to the invoice's outstanding balance and cannot be more than that balance.
+- The customer must have an email address.
+- The invoice must not be cancelled or already paid.
 
-**Response `201`:**
+### GET `/payments/invoice/{invoice_id}/summary`
 ```json
 {
-  "id": 7,
-  "invoice_id": 12,
-  "amount": 303010.00,
-  "payment_method": "paystack",
-  "paystack_reference": "PAY-INV-0012-A3F7B2C1",
-  "paystack_payment_url": "https://checkout.paystack.com/xxxxxxxxxxxx",
-  "status": "pending",
-  "created_at": "2024-06-21T09:00:00"
+  "invoice_id": 42, "invoice_number": "INV-000042",
+  "total_amount": "77323500", "amount_paid": "20000000", "balance_due": "57323500",
+  "payment_status": "partially_paid",
+  "payments": [ { "...": "PaymentOut" } ]
 }
 ```
 
-**Requirements:**
-- `PAYSTACK_SECRET_KEY` must be set in the environment.
-- Customer must have an email address.
-- Invoice must not be cancelled or already paid.
+### Payment flows
+**Bank transfer:**
+1. Staff record the transfer with `POST /payments/bank-transfer` (status `pending`).
+2. An admin or manager checks the bank alert and calls `PUT /payments/{id}/confirm`.
+3. The invoice status updates and a confirmation email is sent.
+
+**Paystack:**
+1. Create the link with `POST /payments/paystack/initialize`.
+2. Email it with `POST /payments/paystack/send-link`.
+3. The customer pays.
+4. Paystack calls the webhook. You can also call `GET /payments/paystack/verify/{reference}` to check manually.
+5. The payment is confirmed and the invoice status updates.
 
 ---
 
-### POST `/payments/paystack/send-link`
-Email the Paystack payment link to the customer.
+## Dashboard
 
-**Request Body:**
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/dashboard/overview` | Any | Headline KPIs (see below) |
+| GET | `/dashboard/cost-of-sales` | Any | Cost-of-sales detail. Query: `date_from`, `date_to`, `customer_id`, `product_id` |
+| GET | `/dashboard/cost-of-sales/pdf` | Any | Same filters. Returns `cost_of_sales.pdf` |
+| POST | `/dashboard/cost-of-sales/email` | Any | Queue an email of the cost-of-sales report |
+| POST | `/dashboard/cost-of-sales/upload-to-make` | Any | Same as the email endpoint (goes to the Make recipients) |
+| GET | `/dashboard/queue-events` | Any | Recent background-job events. Query: `limit` (50, max 200), `event_type` |
+
+**Overview fields:**
+- Counts and totals: `quotations_today`, `invoices_today`, `sales_today`, `sales_this_week`, `sales_this_month`, `active_customers`, `products_sold_today`, `cost_of_sales_this_month`, `cost_of_sales_all_time`
+- Lists: `top_customers`, `top_products`, `recent_invoices`, `recent_quotations`
+- Breakdowns: `delivery_vs_pickup`, `sales_by_payment_term`
+
+**Cost-of-sales email body**
 ```json
 {
-  "payment_id": 7
+  "date_from": "2026-10-01", "date_to": "2026-10-23",
+  "customer_id": null, "product_id": null,
+  "additional_emails": ["finance@example.com"]
 }
 ```
 
-**Response `200`:** Payment object (unchanged).
-
-**Side effects:** Customer receives a payment email with a "Pay Now" button linking to `paystack_payment_url`.
+**QueueEventOut:** `id`, `task_id`, `event_type`, `title`, `requested_by`, `metadata_json`, `created_at`, `status`, `error`, `delivery_outcomes`.
 
 ---
 
-### GET `/payments/paystack/verify/{reference}`
-Manually verify a Paystack payment by its reference string.
+## Analytics
 
-**Example:** `GET /payments/paystack/verify/PAY-INV-0012-A3F7B2C1`
+All endpoints accept **Any** role.
 
-**Response `200`:** Updated payment object.
+| Method | Path | Query params | Returns |
+|---|---|---|---|
+| GET | `/analytics/sales` | `date_from`, `date_to`, `customer_id`, `product_id`, `category_id`, `market_id`, `delivery_type`, `payment_term`, `staff_id` | `SalesAnalytics` |
+| GET | `/analytics/customer-behavior` | `customer_id`, `category_id`, `market_id`, `inactive_days` (30), `limit` (200) | `CustomerBehaviorOut[]` |
+| GET | `/analytics/product-sales` | `date_from`, `date_to`, `category_id`, `market_id`, `delivery_type`, `payment_term`, `limit` (50) | Product sales rows |
+| GET | `/analytics/staff-performance` | `date_from`, `date_to`, `user_id`, `category_id`, `market_id` | `StaffPerformanceOut[]` |
+| GET | `/analytics/comprehensive` | `date_from`, `date_to`, `category_id`, `market_id` | `ComprehensiveStats` |
 
-**Side effects (if Paystack reports success):**
-- Payment status → `confirmed`
-- Invoice amount_paid and status are recalculated
+**SalesAnalytics fields:**
+- Totals: `total_sales_value`, `total_invoices`, `total_quotations`, `quotation_conversion_rate`, `average_invoice_value`
+- Top lists: `top_customers`, `top_products`, `top_markets`, `top_categories`
+- Breakdowns: `sales_by_delivery_type`, `sales_by_payment_term`, `sales_by_staff`
+- Trends: `daily_trend`, `monthly_trend`
+
+**CustomerBehaviorOut:** `customer_id`, `customer_name`, `top_products`, `purchase_frequency_days`, `total_orders`, `total_value`, `last_order_date`, `is_inactive_30_days`, `month_over_month_change_pct`.
+
+**StaffPerformanceOut:** `user_id`, `full_name`, `username`, `quotations_created`, `invoices_created`, `total_sales_value`, `conversion_rate`.
+
+**ComprehensiveStats:**
+- `quotations`: counts by status, plus approval, rejection and conversion rates and total value
+- `invoices`: counts by status, plus billed, collected and outstanding totals and rates
+- `payments`: counts and amounts by status
+- `by_sales_person[]`: quotation and invoice breakdown for each salesperson
+- `by_manager[]`: approve/reject activity, `revenue_approved` and `top_sales` for each manager
+- `revenue_by_role`, `top_customers_revenue`, `top_products_revenue`
 
 ---
 
-### POST `/payments/paystack/webhook`
-Paystack webhook endpoint — **do not call directly**.
+## Reports
 
-Configure this URL in your Paystack dashboard under **Settings → Webhooks**:
+Every report runs in the background and produces an `.xlsx` file. **Auth:** Report roles (`admin`, `manager`, `analyst`). All parameters are **query params**, and every endpoint returns `202` with a job.
+
+| Method | Path | Query params |
+|---|---|---|
+| POST | `/reports/sales` | `date_from`, `date_to`, `customer_id`, `payment_term`, `delivery_type` |
+| POST | `/reports/invoices` | `date_from`, `date_to` |
+| POST | `/reports/quotations` | `date_from`, `date_to`, `status` |
+| POST | `/reports/customer-sales` | `date_from`, `date_to` |
+| POST | `/reports/product-sales` | `date_from`, `date_to` |
+| POST | `/reports/cost-price-history` | `date_from`, `date_to` |
+| POST | `/reports/staff-performance` | `date_from`, `date_to` |
+
+```bash
+TASK=$(curl -s -X POST "https://<host>/api/v1/reports/sales?date_from=2026-10-01&date_to=2026-10-23" \
+  -H "Authorization: Bearer $TOKEN" | jq -r .task_id)
+curl -s "https://<host>/api/v1/jobs/$TASK" -H "Authorization: Bearer $TOKEN"
+curl -L -o sales.xlsx "https://<host>/api/v1/jobs/$TASK/download" -H "Authorization: Bearer $TOKEN"
 ```
-https://yourdomain.com/api/v1/payments/paystack/webhook
-```
-
-**Events handled:** `charge.success`
-
-**Signature verification:** Uses HMAC-SHA512 with your `PAYSTACK_SECRET_KEY` against the `x-paystack-signature` header.
-
-**No authentication required** (Paystack calls this endpoint directly).
 
 ---
 
-## 11. Dashboard
+## Background Jobs
 
-### GET `/dashboard/overview`
-Overview KPIs for the dashboard.
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/jobs/{task_id}` | Any | Job status |
+| GET | `/jobs/{task_id}/download` | Any | Redirects to a presigned S3 URL for the output file. The URL is valid for 1 hour |
 
-**Response:**
+**JobStatusResponse**
 ```json
 {
-  "quotations_today": 5,
-  "invoices_today": 3,
-  "sales_today": 1250000.00,
-  "sales_this_week": 8700000.00,
-  "sales_this_month": 35000000.00,
-  "active_customers": 142,
-  "products_sold_today": 47.5,
-  "top_customers": [...],
-  "top_products": [...],
-  "delivery_vs_pickup": { "delivery": 65, "pickup": 35 },
-  "sales_by_payment_term": { "immediate": 12, "net_30": 23 },
-  "recent_invoices": [...],
-  "recent_quotations": [...]
+  "task_id": "c1f3...",
+  "status": "SUCCESS",
+  "download_url": "https://...",
+  "result": { "...": "task-specific" },
+  "error": null
 }
 ```
+`status` is one of `PENDING`, `STARTED`, `SUCCESS`, `FAILURE`, `RETRY`.
 
 ---
 
-## 12. Analytics
-
-### GET `/analytics/sales`
-Detailed sales analytics.
-
-**Query Params:** `date_from`, `date_to`
-
-**Response:** Total sales, invoice count, quotation conversion rate, average invoice value, top customers/products/categories, breakdowns by delivery type, payment term, staff, daily and monthly trends.
-
-### GET `/analytics/customers`
-Customer behaviour analytics — purchase frequency, inactive customers, month-over-month change.
-
-### GET `/analytics/products/{product_id}`
-Product-level analytics — qty sold, revenue, customer concentration.
-
-### GET `/analytics/staff`
-Staff performance — quotations and invoices created, conversion rate, total sales value.
-
----
-
-## 13. Reports
-
-### GET `/reports/sales`
-Download a sales report as an Excel file.
-
-**Query Params:** `date_from`, `date_to`, `customer_id`, `payment_term`, `delivery_type`
-
-**Response:** `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
-
----
-
-## 14. Audit Trail
-
-> Admin and Manager only.
+## Audit Trail
 
 ### GET `/audit-trail`
-List audit log entries.
+**Auth:** Admin/Manager.
 
-**Query Params:** `entity_type`, `entity_id`, `user_id`, `action`, `date_from`, `date_to`, `skip`, `limit`
+**Query params:** `skip`, `limit` (100), `entity_type`, `entity_id`, `user_id`, `action`, `date_from`, `date_to` (datetimes).
 
-**`entity_type` values:**
-`user`, `customer`, `product`, `cost_price`, `pricing_rule`, `quotation`, `invoice`, `setting`, `payment`, `payment_account`
-
-**`action` values:**
-`create`, `update`, `delete`, `approve`, `reject`, `convert`, `submit`, `cancel`, `login`, `deactivate`, `confirm`, `void`
-
----
-
-## 15. Settings
-
-### GET `/settings`
-List all application settings.
-
-### GET `/settings/{key}`
-Get a specific setting by key.
-
-**Built-in setting keys:**
-
-| Key                        | Default         | Description                              |
-|----------------------------|-----------------|------------------------------------------|
-| `company_name`             | Foodstuff Store | Display name used in PDFs and emails     |
-| `company_address`          |                 | Company address                          |
-| `company_email`            |                 | Company email                            |
-| `company_phone`            |                 | Company phone                            |
-| `invoice_prefix`           | INV             | Prefix for invoice numbers               |
-| `quotation_prefix`         | QUO             | Prefix for quotation numbers             |
-| `currency`                 | NGN             | Currency code                            |
-| `currency_symbol`          | ₦               | Currency symbol shown in PDFs            |
-| `paystack_enabled`         | false           | Show Paystack payment option in UI       |
-| `payment_link_expiry_hours`| 24              | Hours before payment link is considered stale |
-
-### PUT `/settings/{key}` `[Admin/Manager]`
-Update a setting value.
-
-**Request Body:** `{ "key": "company_name", "value": "My Foodstuff Store" }`
-
-### PUT `/settings` `[Admin/Manager]`
-Bulk update multiple settings.
-
-**Request Body:**
 ```json
 [
-  { "key": "company_name",  "value": "My Store" },
-  { "key": "company_email", "value": "info@mystore.com" }
+  {
+    "id": 501, "action": "update", "entity_type": "customer", "entity_id": 12,
+    "user_id": 3, "user": { "...": "UserOut" },
+    "description": "Bulk CSV update",
+    "old_values": "{\"city\": \"Ikeja\"}", "new_values": "{\"city\": \"Lagos\"}",
+    "timestamp": "2026-10-23T10:12:00"
+  }
 ]
 ```
+`old_values` and `new_values` are JSON-encoded strings. See [Enums](#enums) for the values of `action` and `entity_type`.
 
 ---
 
-## 16. Error Codes
+## Settings
 
-| HTTP Status | Meaning                                                              |
-|-------------|----------------------------------------------------------------------|
-| `400`       | Bad request — invalid input, business rule violation                 |
-| `401`       | Unauthorized — missing or invalid JWT token                          |
-| `403`       | Forbidden — insufficient role permissions                            |
-| `404`       | Not found — resource does not exist                                  |
-| `422`       | Unprocessable entity — request body validation failed (Pydantic)     |
-| `502`       | Bad gateway — Paystack API call failed                               |
-| `503`       | Service unavailable — Paystack not configured (missing secret key)   |
+These are key/value app settings. Seeded keys:
+- Company details: `company_name`, `company_address`, `company_email`, `company_phone`
+- Document numbering: `invoice_prefix`, `quotation_prefix`
+- Currency: `currency`, `currency_symbol`
+- Paystack: `paystack_enabled`, `payment_link_expiry_hours`
 
-All error responses follow the format:
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/settings` | Any | List all settings |
+| GET | `/settings/{key}` | Any | Get one setting |
+| PUT | `/settings/{key}` | Admin/Manager | Update one. Body: `{ "key": "company_name", "value": "Foodstuff Store" }` |
+| PUT | `/settings` | Admin/Manager | Bulk update. Body: an array of `{ key, value }` |
+| POST | `/settings/test-email` | Admin/Manager | Send a test email to check SMTP. Body: `{ "to": "me@example.com" }` |
+
+**SettingOut:** `key`, `value`, `description`, `updated_at`.
+
+---
+
+## Custom Orders
+
+These endpoints pass requests through to the main Foodstuff Store API (`FOODSTUFF_API_URL` + `/api/internal/ni/procurement`), authenticating with `FOODSTUFF_API_KEY`. **Auth:** `admin`, `manager`, `sales`.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/custom-orders` | List. Query: `skip` (≥0), `limit` (1–100, default 20), `status`. Returns `{ "items": [...], "total": n }` |
+| POST | `/custom-orders/{req_id}/approve` | Accept an order (it moves to sourcing). Body: `{ "notes": "..." }` (optional) |
+| POST | `/custom-orders/{req_id}/reject` | Reject an order. Body: `{ "reason": "..." }` (required, non-empty) |
+
+**How errors are handled:**
+- If the integration is not configured, the list endpoint returns an empty list and approve/reject return `503`.
+- If the main API returns `401` or `403`, the list endpoint returns an empty list instead of an error. This stops staff from being logged out.
+- If the main API is unreachable, all three return `503`.
+- If the main API returns a `5xx` error, all three return `502`.
+
+---
+
+## Enums
+
+| Enum | Values |
+|---|---|
+| `UserRole` | `admin`, `manager`, `sales`, `analyst`, `accountant`, `operations` |
+| `DeliveryType` | `delivery`, `pickup` |
+| `QuotationStatus` | `draft`, `pending_approval`, `approved`, `rejected`, `converted` |
+| `InvoiceStatus` | `active`, `partially_paid`, `paid`, `completed`, `cancelled` |
+| `PricingRuleType` | `supply`, `delivery`, `payment_term`, `other` |
+| `PaymentMethod` | `bank_transfer`, `paystack`, `cash`, `cheque` |
+| `PaymentStatus` | `pending`, `confirmed`, `failed`, `voided` |
+| `AuditAction` | `create`, `update`, `delete`, `approve`, `reject`, `convert`, `submit`, `cancel`, `login`, `deactivate`, `confirm`, `void` |
+| `AuditEntity` | `user`, `customer`, `product`, `cost_price`, `pricing_rule`, `quotation`, `invoice`, `setting`, `payment`, `payment_account` |
+
+---
+
+## Pricing Model
+
+### Line items
+Each line's unit price is built from the product's current cost price:
+
+```
+unit_price = cost_price
+           + supply markup                  (always)
+           + delivery markup                (only when delivery_type = "delivery")
+           + payment-term markup            (rule matching payment_term)
+           + every ACTIVE "other" rule      (added on top of the rules above)
+           + WHT 5.4%                       (only when apply_wht = true; included in the unit price)
+line_total = unit_price × quantity, then minus discount_pct
+```
+- All markups are calculated on the cost price.
+- Amounts are rounded to the nearest kobo.
+- A line that has `unit_price_override` (quotations) or `unit_price` (invoices) uses that price and skips this calculation.
+
+### Document totals
+These charges are added once, on the document subtotal (the sum of the line totals):
+
+| Charge | When it applies | Rate |
+|---|---|---|
+| Handling charge | `apply_handling_charge` (default `true`) | 5% of the subtotal |
+| VAT | `apply_vat` (quotations) | 7.5% of the subtotal |
+| Delivery fee | `delivery_fee` (quotations) | A fixed amount in kobo |
+| Individual "other" charges | `other_rule_ids` | Each rule's % of the subtotal |
+
+### Global vs individual "other" rules
+- An **active** `other` rule is global. It is applied automatically to every line on every document.
+- An **inactive** `other` rule is applied only where it is listed in a document's `other_rule_ids`. It is charged once on the subtotal and listed in `extra_charges` as `{rule_id, name, pct, amount}`.
+- Only inactive rules can be attached to a single document. This stops a rule from being charged twice.
+- The amounts are saved with the document, so editing the rule later does not change totals on existing documents.
+
+---
+
+## Errors
+
+All errors use this format:
 ```json
 { "detail": "Human-readable error message" }
 ```
+Validation errors (`422`) return FastAPI's standard list in `detail`.
+
+| Status | Meaning |
+|---|---|
+| `400` | Bad request: a business rule was broken or the input is invalid |
+| `401` | The token is missing, invalid or expired, or the user is inactive |
+| `403` | Your role is not allowed to use this endpoint |
+| `404` | The resource was not found |
+| `422` | The request body or params failed validation |
+| `502` | An upstream service failed (Paystack or the Foodstuff API) |
+| `503` | An upstream service is not configured or cannot be reached |
 
 ---
 
-## Payment Flow Reference
-
-### Bank Transfer Flow
-
-```
-Staff                    API                        Manager/Admin
-  |                       |                               |
-  |-- POST /payments/     |                               |
-  |   bank-transfer  ---->|                               |
-  |                       | Creates payment (pending)     |
-  |<-- 201 Payment -------|                               |
-  |                       |                               |
-  |                       |<-- PUT /payments/{id}/confirm |
-  |                       |   (after bank alert received) |
-  |                       | Updates payment → confirmed   |
-  |                       | Recalculates invoice status   |
-  |                       | Sends confirmation email      |
-  |                       |------------------------------>|
-```
-
-### Paystack Flow
-
-```
-Staff                    API                    Paystack           Customer
-  |                       |                        |                  |
-  |-- POST /payments/     |                        |                  |
-  |   paystack/initialize |                        |                  |
-  |   ------------------>|                        |                  |
-  |                       |-- Initialize txn ----->|                  |
-  |                       |<-- payment URL --------|                  |
-  |                       | Creates payment (pending)                 |
-  |<-- 201 + URL ---------|                                           |
-  |                       |                                           |
-  |-- POST /payments/     |                                           |
-  |   paystack/send-link  |                                           |
-  |   ------------------>|                                           |
-  |                       |-- Payment link email ---------------------->|
-  |                       |                        |                  |
-  |                       |                        |<-- Customer pays --|
-  |                       |<-- charge.success      |                  |
-  |                       |    webhook ------------|                  |
-  |                       | Verifies signature                        |
-  |                       | Confirms payment                          |
-  |                       | Updates invoice status                    |
-  |                       |-- Confirmation email ---------------------->|
-```
-
----
-
-## Environment Variables Reference
+## Environment Variables
 
 ```env
-# App
-DATABASE_URL=sqlite:///./foodstuff.db
-SECRET_KEY=change-this-to-a-long-random-secret-key
+# Core
+DATABASE_URL=postgresql://user:pass@host:5432/db
+SECRET_KEY=change-me
 ACCESS_TOKEN_EXPIRE_MINUTES=480
+ALLOWED_ORIGINS=https://invoicing.foodstuff.store,http://localhost:5173
 
-# Redis (Celery)
+# Celery / background jobs
 REDIS_URL=redis://localhost:6379/0
 
-# SMTP Email
+# Email (SMTP)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USE_SSL=false
-SMTP_USER=yourname@gmail.com
-SMTP_PASSWORD=your-app-password
+SMTP_USER=...
+SMTP_PASSWORD=...
 SMTP_FROM_NAME=Foodstuff Store
-SMTP_FROM_EMAIL=noreply@foodstuffstore.com
-FRONTEND_URL=http://localhost:3000
+SMTP_FROM_EMAIL=noreply@foodstuff.store
+FRONTEND_URL=https://invoicing.foodstuff.store
 
-# Paystack Payment Gateway
-PAYSTACK_SECRET_KEY=sk_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-PAYSTACK_PUBLIC_KEY=pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Paystack
+PAYSTACK_SECRET_KEY=sk_...
+PAYSTACK_PUBLIC_KEY=pk_...
 
-# Background jobs
-JOB_OUTPUT_DIR=/tmp/foodstuff_jobs
-JOB_INPUT_DIR=/tmp/foodstuff_uploads
+# Foodstuff Store integration (custom orders)
+FOODSTUFF_API_URL=https://...
+FOODSTUFF_API_KEY=...
 ```
 
----
-
-## Quick Start: Set Up Payments
-
-### Step 1 — Add a bank account (Admin/Manager)
-
-```bash
-curl -X POST http://localhost:8000/api/v1/payment-accounts \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "account_name": "Foodstuff Store Ltd",
-    "bank_name": "GTBank",
-    "account_number": "0123456789",
-    "account_type": "current",
-    "is_default": true
-  }'
-```
-
-### Step 2 — Record a customer bank transfer (Sales)
-
-```bash
-curl -X POST http://localhost:8000/api/v1/payments/bank-transfer \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "invoice_id": 12,
-    "amount": 200000,
-    "payment_account_id": 1,
-    "payment_date": "2024-06-20",
-    "payer_name": "Ade Foods",
-    "notes": "Trf ref ADE001"
-  }'
-```
-
-### Step 3 — Confirm after verifying bank alert (Admin/Manager)
-
-```bash
-curl -X PUT http://localhost:8000/api/v1/payments/3/confirm \
-  -H "Authorization: Bearer <token>"
-```
-
-### Step 4 — Generate a Paystack link (requires PAYSTACK_SECRET_KEY)
-
-```bash
-curl -X POST http://localhost:8000/api/v1/payments/paystack/initialize \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{ "invoice_id": 12 }'
-```
-
-### Step 5 — Email the payment link to the customer
-
-```bash
-curl -X POST http://localhost:8000/api/v1/payments/paystack/send-link \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{ "payment_id": 7 }'
-```
+If `ALLOWED_ORIGINS` is not set, CORS allows `https://invoicing.foodstuff.store`, `http://localhost:5173` and `http://127.0.0.1:5173`.
