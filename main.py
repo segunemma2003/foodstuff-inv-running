@@ -3,6 +3,8 @@ from datetime import date
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -225,8 +227,43 @@ app = FastAPI(
         "Internal API for creating quotations and invoices from cost-based pricing rules. "
         "Quotation approval is required before invoice creation."
     ),
-    lifespan=lifespan,
+    lifespan=lifespan,    docs_url=None,
+    redoc_url=None,
 )
+
+# ─── Branded API docs (Foodstuff Store favicon instead of FastAPI's) ────────────
+
+_FAVICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "favicon.png")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+@app.get("/favicon.png", include_in_schema=False)
+def favicon():
+    return FileResponse(_FAVICON_PATH, media_type="image/png")
+
+
+@app.get("/docs", include_in_schema=False)
+def swagger_docs():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} — Docs",
+        oauth2_redirect_url="/docs/oauth2-redirect",
+        swagger_favicon_url="/favicon.png",
+    )
+
+
+@app.get("/docs/oauth2-redirect", include_in_schema=False)
+def swagger_oauth2_redirect():
+    return get_swagger_ui_oauth2_redirect_html()
+
+
+@app.get("/redoc", include_in_schema=False)
+def redoc_docs():
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} — ReDoc",
+        redoc_favicon_url="/favicon.png",
+    )
 
 _cors_origins_env = os.getenv("ALLOWED_ORIGINS", "")
 _cors_origins = (

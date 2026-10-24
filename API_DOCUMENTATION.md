@@ -1,3 +1,5 @@
+<p align="center"><img src="static/logo.png" alt="Foodstuff Store" width="260"></p>
+
 # Foodstuff Store — Quotation & Invoicing API
 
 Internal REST API (FastAPI) for managing customers, products, cost prices, pricing rules, quotations, invoices and payments.
