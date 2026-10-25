@@ -643,7 +643,7 @@ def upload_quotation_to_make(
         raise HTTPException(400, "Submit the quotation before sending it")
 
     pdf_bytes = gen_pdf(quotation)
-    recipients: List[str] = [QUOTATION_PRIMARY_RECIPIENT]
+    recipients: List[str] = [QUOTATION_PRIMARY_RECIPIENT, "operations@foodstuff.store", "sales@foodstuff.store"]
     if additional_emails:
         recipients.extend([e.strip() for e in additional_emails if e and e.strip()])
     recipients = list(dict.fromkeys(recipients))

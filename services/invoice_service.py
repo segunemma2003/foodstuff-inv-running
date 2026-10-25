@@ -752,7 +752,7 @@ async def upload_invoice_pdf(
     db.commit()
     db.refresh(inv)
 
-    recipients: List[str] = [INVOICE_PRIMARY_RECIPIENT]
+    recipients: List[str] = [INVOICE_PRIMARY_RECIPIENT, "operations@foodstuff.store", "sales@foodstuff.store"]
     if additional_emails:
         recipients.extend([e.strip() for e in additional_emails.split(",") if e.strip()])
     recipients = list(dict.fromkeys(recipients))
@@ -876,6 +876,8 @@ def send_invoice_email(
     if inv.customer and inv.customer.email:
         emails.append(inv.customer.email)
     emails.append(INVOICE_PRIMARY_RECIPIENT)
+    emails.append("operations@foodstuff.store")
+    emails.append("sales@foodstuff.store")
     if additional_emails:
         emails.extend([e.strip() for e in additional_emails if e.strip()])
     emails = list(dict.fromkeys(emails))
@@ -930,7 +932,7 @@ def upload_invoice_to_make(
             extra=invoice_data,
         )
 
-    emails: List[str] = [INVOICE_PRIMARY_RECIPIENT]
+    emails: List[str] = [INVOICE_PRIMARY_RECIPIENT, "operations@foodstuff.store", "sales@foodstuff.store"]
     if additional_emails:
         emails.extend([e.strip() for e in additional_emails if e.strip()])
     emails = list(dict.fromkeys(emails))

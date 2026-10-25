@@ -195,7 +195,12 @@ def send_quotation_to_customer_task(self, quotation_id: int):
             q.customer.customer_name,
             float(q.total_amount),
         )
-        recipients = list(dict.fromkeys([customer_email, QUOTATION_PRIMARY_RECIPIENT]))
+        recipients = list(dict.fromkeys([
+            customer_email,
+            QUOTATION_PRIMARY_RECIPIENT,
+            "operations@foodstuff.store",
+            "sales@foodstuff.store",
+        ]))
         for recipient in recipients:
             send_email(
                 to=recipient,
