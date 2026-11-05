@@ -1,4 +1,9 @@
 import os
+
+from sentry_setup import init_sentry
+
+init_sentry("web")
+
 from datetime import date
 from contextlib import asynccontextmanager
 

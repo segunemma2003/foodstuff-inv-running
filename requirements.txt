@@ -22,3 +22,4 @@ redis==5.1.1
 flower==2.0.1
 # AWS S3 (file uploads, generated PDFs/reports)
 boto3==1.35.36
+sentry-sdk[fastapi,celery]==2.72.0

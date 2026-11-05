@@ -1,4 +1,8 @@
 import os
+
+from sentry_setup import init_sentry
+
+init_sentry("celery")
 import ssl
 from celery import Celery
 
