@@ -23,4 +23,4 @@ flower==2.0.1
 # AWS S3 (file uploads, generated PDFs/reports)
 boto3==1.35.36
 sentry-sdk[fastapi,celery]==2.72.0
-packaging==25.0  # required by kombu>=5.6 redis transport, not declared as a dependency
+kombu==5.4.2  # pin: kombu 5.7 needs redis-py>=6.1 and packaging; we pin redis==5.1.1
