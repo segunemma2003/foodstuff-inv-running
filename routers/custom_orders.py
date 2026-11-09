@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Optional
 
@@ -14,6 +15,7 @@ FOODSTUFF_API_KEY = os.getenv("FOODSTUFF_API_KEY", "")
 _TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
 router = APIRouter(prefix="/custom-orders", tags=["Custom Orders"])
+logger = logging.getLogger(__name__)
 
 # Sales owns customers — they must be able to review and accept custom orders
 _require_custom_orders = require_roles("admin", "manager", "sales")
@@ -55,19 +57,33 @@ async def list_custom_orders(
 
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(
-                f"{FOODSTUFF_API_URL}/api/internal/ni/procurement",
-                params=params,
-                headers=_headers(),
-            )
+            # One retry on a 5xx: Foodstuff API dynos restart daily and briefly 503.
+            for attempt in range(2):
+                resp = await client.get(
+                    f"{FOODSTUFF_API_URL}/api/internal/ni/procurement",
+                    params=params,
+                    headers=_headers(),
+                )
+                if resp.status_code < 500:
+                    break
         if resp.status_code == 200:
             data = resp.json()
             if isinstance(data, list):
                 return {"items": data, "total": len(data)}
             return data
         if resp.status_code in (401, 403):
+            logger.warning(
+                "Foodstuff API rejected the service key for custom orders (HTTP %s); check FOODSTUFF_API_KEY",
+                resp.status_code,
+            )
             return {"items": [], "total": 0}
-        raise HTTPException(status_code=502, detail="Failed to fetch custom orders")
+        logger.error(
+            "Foodstuff API custom orders returned HTTP %s: %s", resp.status_code, resp.text[:500]
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to fetch custom orders (Foodstuff API returned HTTP {resp.status_code})",
+        )
     except httpx.RequestError:
         raise HTTPException(status_code=503, detail="Foodstuff API unavailable")
 

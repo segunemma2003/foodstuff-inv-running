@@ -9,6 +9,7 @@ from fastapi import HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
+from sqlalchemy.exc import IntegrityError
 
 import models
 import schemas
@@ -30,6 +31,32 @@ def _product_name_exists_in_market(
     if exclude_product_id is not None:
         existing_product_query = existing_product_query.filter(models.Product.id != exclude_product_id)
     return db.query(existing_product_query.exists()).scalar()
+
+
+def _ensure_sku_available(db: Session, sku: Optional[str], exclude_product_id: Optional[int] = None) -> None:
+    """Reject a SKU already used by another product with a clear 409 (products.sku is UNIQUE)."""
+    if not sku:
+        return
+    q = db.query(models.Product).filter(models.Product.sku == sku)
+    if exclude_product_id is not None:
+        q = q.filter(models.Product.id != exclude_product_id)
+    clash = q.first()
+    if clash:
+        raise HTTPException(
+            409,
+            f"SKU {sku} is already used by product #{clash.id} ({clash.product_name}). Choose a different SKU.",
+        )
+
+
+def _commit_product(db: Session) -> None:
+    """Commit, turning a concurrent duplicate-SKU race into a 409 instead of a 500."""
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if "products_sku_key" in str(exc.orig):
+            raise HTTPException(409, "That SKU is already used by another product. Choose a different SKU.")
+        raise
 
 
 def _generate_unique_sku(db: Session, product_name: str, market_id: Optional[int]) -> str:
@@ -266,17 +293,26 @@ def create_product(db: Session, body: schemas.ProductCreate, current_user: model
         ).first()
         if existing:
             if payload.get("sku"):
+                _ensure_sku_available(db, payload["sku"], exclude_product_id=existing.id)
                 existing.sku = payload["sku"]
             if payload.get("unit_of_measure"):
                 existing.unit_of_measure = payload["unit_of_measure"]
-            db.commit()
+            _commit_product(db)
             db.refresh(existing)
             return enrich_product(existing, db)
     if not payload.get("sku"):
         payload["sku"] = _generate_unique_sku(db, product_name, market_for_unique)
+    else:
+        _ensure_sku_available(db, payload["sku"])
     product = models.Product(**payload)
     db.add(product)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        if "products_sku_key" in str(exc.orig):
+            raise HTTPException(409, "That SKU is already used by another product. Choose a different SKU.")
+        raise
     audit.log(
         db,
         models.AuditAction.create,
@@ -338,6 +374,8 @@ def update_product(
     next_uom = str(payload.get("unit_of_measure", p.unit_of_measure) or "").strip()
     if next_name and _product_name_exists_in_market(db, next_name, next_market, unit_of_measure=next_uom, exclude_product_id=p.id):
         raise HTTPException(400, "Product name already exists in this market")
+    if payload.get("sku") and payload["sku"] != p.sku:
+        _ensure_sku_available(db, payload["sku"], exclude_product_id=p.id)
     old = {k: str(getattr(p, k)) for k in payload}
     for field, value in payload.items():
         setattr(p, field, value)
@@ -350,7 +388,7 @@ def update_product(
         old_values=old,
         new_values=body.model_dump(exclude_none=True),
     )
-    db.commit()
+    _commit_product(db)
     db.refresh(p)
     return enrich_product(p, db)
 
