@@ -73,6 +73,13 @@ Heavy work (bulk uploads, report generation, PDF generation) returns `202 Accept
 
 Poll [`GET /jobs/{task_id}`](#background-jobs) until `status` is `SUCCESS` or `FAILURE`, then fetch any output file from `GET /jobs/{task_id}/download`.
 
+### File storage
+Files live in the shared Cloudflare R2 bucket (S3-compatible), under `private/inventory/`. Generated PDFs and reports (`jobs/`), bulk-upload inputs (`uploads/`) and signed invoices (`invoices/`) are private and only reachable through presigned URLs that this API creates. The database keeps the short key (e.g. `invoices/100/signed_<uuid>.pdf`); the `private/inventory/` prefix is added automatically.
+
+Product images are public and stored as a permanent CDN URL (`https://cdn.foodstuff.store/public/products/inventory/...`) once `AWS_PUBLIC_URL` is set.
+
+Configuration: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET`, `AWS_ENDPOINT` (`https://<account_id>.r2.cloudflarestorage.com`; unset = plain AWS S3), `AWS_S3_REGION` (`auto`), `AWS_PUBLIC_URL`.
+
 ### Bulk delete
 Bulk-delete endpoints take `{ "ids": [1, 2, 3] }` and return:
 
@@ -528,8 +535,8 @@ Statuses: `active`, `partially_paid`, `paid`, `completed`, `cancelled`. Payment 
 | DELETE | `/invoices/{invoice_id}` | Any | Delete |
 | POST | `/invoices/bulk-delete` | Any | Bulk delete |
 | POST | `/invoices/{invoice_id}/cancel` | Admin/Manager | Cancel |
-| GET | `/invoices/{invoice_id}/pdf` | Any | Download the invoice PDF (an uploaded custom PDF if one exists) |
-| GET | `/invoices/{invoice_id}/signed-pdf` | Any | Download the signed copy |
+| GET | `/invoices/{invoice_id}/pdf` | Any | Download the invoice PDF (the uploaded signed/custom PDF if one exists and can be read; otherwise the generated PDF) |
+| GET | `/invoices/{invoice_id}/signed-pdf` | Any | Download the signed copy. `404` if none was uploaded or the stored copy can't be read |
 | GET | `/invoices/{invoice_id}/cost-of-sales/pdf` | Any | Download the cost-of-sales PDF for this invoice |
 | POST | `/invoices/{invoice_id}/generate-pdf` | Any | Generate the PDF in the background. Returns `202` with a job |
 | POST | `/invoices/{invoice_id}/upload-pdf` | Any | Replace the generated PDF with your own. `multipart/form-data`: `file`, optional `additional_emails` (comma-separated string) |
@@ -788,7 +795,7 @@ curl -L -o sales.xlsx "https://<host>/api/v1/jobs/$TASK/download" -H "Authorizat
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/jobs/{task_id}` | Any | Job status |
-| GET | `/jobs/{task_id}/download` | Any | Redirects to a presigned S3 URL for the output file. The URL is valid for 1 hour |
+| GET | `/jobs/{task_id}/download` | Any | Redirects to a presigned R2 URL for the output file. The URL is valid for 1 hour |
 
 **JobStatusResponse**
 ```json
