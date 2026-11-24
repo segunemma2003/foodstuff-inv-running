@@ -3,6 +3,7 @@
 from datetime import date
 from io import BytesIO
 from typing import List, Optional
+import logging
 import uuid
 import os
 
@@ -25,6 +26,8 @@ from utils.pdf_generator import generate_cost_of_sales_pdf
 from utils.pdf_generator import generate_invoice_pdf as gen_pdf
 from utils.queue_events import log_queue_event
 from utils.s3 import delete_object, download_bytes, upload_bytes
+
+logger = logging.getLogger(__name__)
 from utils.tasks import (
     generate_invoice_pdf_task,
     process_invoice_bulk_task,
@@ -606,15 +609,30 @@ def get_invoice(db: Session, invoice_id: int) -> models.Invoice:
     return inv
 
 
+def _read_signed_pdf(inv: models.Invoice) -> Optional[bytes]:
+    """The uploaded signed copy, or None if there isn't one or it can't be read."""
+    if not inv.custom_pdf_s3_key:
+        return None
+    try:
+        return download_bytes(inv.custom_pdf_s3_key)
+    except Exception:
+        logger.warning(
+            "Signed PDF for invoice %s (%s) could not be read; using generated PDF",
+            inv.id, inv.custom_pdf_s3_key, exc_info=True,
+        )
+        return None
+
+
 def download_invoice_pdf(db: Session, invoice_id: int):
     inv = get_invoice(db, invoice_id)
-    if inv.custom_pdf_s3_key:
-        pdf_bytes = download_bytes(inv.custom_pdf_s3_key)
+    signed = _read_signed_pdf(inv)
+    if signed is not None:
         return StreamingResponse(
-            BytesIO(pdf_bytes),
+            BytesIO(signed),
             media_type="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="{inv.invoice_number}.pdf"'},
         )
+    # No signed copy (or it can't be read) — generate the regular invoice PDF.
 
     from utils.bank_accounts import resolve_bank_accounts_for_customer
     bank_accounts = resolve_bank_accounts_for_customer(db, inv.customer_id)
@@ -641,7 +659,13 @@ def download_signed_invoice_pdf(db: Session, invoice_id: int):
     inv = get_invoice(db, invoice_id)
     if not inv.custom_pdf_s3_key:
         raise HTTPException(404, "Signed invoice not uploaded yet")
-    pdf_bytes = download_bytes(inv.custom_pdf_s3_key)
+    pdf_bytes = _read_signed_pdf(inv)
+    if pdf_bytes is None:
+        raise HTTPException(
+            404,
+            "The signed copy of this invoice is not available. "
+            "Download the regular invoice PDF, or upload the signed copy again.",
+        )
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",

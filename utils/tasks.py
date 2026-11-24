@@ -236,9 +236,14 @@ def send_invoice_to_recipients_task(self, invoice_id: int, recipients: list[str]
         if not normalized_recipients:
             raise ValueError("No recipients provided")
 
+        pdf_bytes = None
         if inv.custom_pdf_s3_key:
-            pdf_bytes = download_bytes(inv.custom_pdf_s3_key)
-        else:
+            try:
+                pdf_bytes = download_bytes(inv.custom_pdf_s3_key)
+            except Exception:
+                # Signed copy unreadable — fall back to the generated invoice PDF.
+                pdf_bytes = None
+        if pdf_bytes is None:
             from utils.bank_accounts import resolve_bank_accounts_for_customer
             bank_accounts = resolve_bank_accounts_for_customer(db, inv.customer_id)
             pdf_bytes = generate_invoice_pdf(inv, bank_accounts=bank_accounts)

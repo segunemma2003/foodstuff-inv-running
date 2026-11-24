@@ -560,8 +560,9 @@ def product_analytics(db: Session, product_id: int) -> schemas.ProductAnalyticsO
 async def upload_product_image(
     db: Session, product_id: int, file: UploadFile, current_user: models.User
 ) -> schemas.ProductOut:
+    import os
     import uuid
-    from utils.s3 import upload_bytes
+    from utils.s3 import upload_bytes, delete_object, public_url
 
     p = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not p:
@@ -572,11 +573,22 @@ async def upload_product_image(
         raise HTTPException(400, "Unsupported image format. Use jpg, png, webp or gif.")
 
     content = await file.read()
-    s3_key = f"products/{product_id}/{uuid.uuid4()}.{ext}"
-    content_type = file.content_type or f"image/{ext}"
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Image too large (max 5 MB)")
+    content_type = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                    "webp": "image/webp", "gif": "image/gif"}[ext]
+    if os.getenv("AWS_ENDPOINT"):
+        # R2: public product images are served by the CDN with a permanent URL.
+        s3_key = f"public/products/inventory/{product_id}/{uuid.uuid4().hex}.{ext}"
+        new_value = public_url(s3_key)
+    else:
+        s3_key = f"products/{product_id}/{uuid.uuid4()}.{ext}"
+        new_value = s3_key
     upload_bytes(s3_key, content, content_type)
+    if p.image_url:
+        delete_object(p.image_url)
 
-    p.image_url = s3_key
+    p.image_url = new_value
     audit.log(
         db,
         models.AuditAction.update,
